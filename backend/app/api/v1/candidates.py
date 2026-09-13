@@ -273,7 +273,9 @@ async def candidate_login(
 
 
 @router.get("/session/question/{question_index}")
+@limiter.limit(settings.rate_limit_candidate_question)
 async def get_question(
+    request: Request,
     question_index: int,
     session_token: str,
     db: AsyncSession = Depends(get_db),
@@ -379,7 +381,9 @@ async def get_question(
 
 
 @router.post("/session/response")
+@limiter.limit(settings.rate_limit_candidate_autosave)
 async def save_response(
+    request: Request,
     body: ResponseRequest,
     db: AsyncSession = Depends(get_db),
 ):
@@ -414,7 +418,9 @@ async def save_response(
 
 
 @router.post("/session/heartbeat")
+@limiter.limit(settings.rate_limit_candidate_heartbeat)
 async def heartbeat(
+    request: Request,
     body: HeartbeatRequest,
     db: AsyncSession = Depends(get_db),
 ):

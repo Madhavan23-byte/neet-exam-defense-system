@@ -39,6 +39,12 @@ async def lifespan(app: FastAPI):
     await flush_audit_queue()
     await worker_task
     logger.info("Audit worker stopped")
+    try:
+        from app.core.redis_client import close_redis
+        await close_redis()
+    except Exception as e:
+        logger.warning("Error closing Redis on shutdown: %s", e)
+    await engine.dispose()
 
 app = FastAPI(
     title=settings.app_name,
@@ -59,6 +65,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from app.api.v1.health import router as health_router
+app.include_router(health_router)
 app.include_router(api_router, prefix="/api/v1")
 
 @app.get("/health")

@@ -808,6 +808,8 @@ def test_audit_trail_complete_lifecycle(
         json={"reason": "Lifecycle test completion"},
         headers=headers_req,
     )
+    import time
+    time.sleep(0.3)
 
     rows = db_fetch(
         "SELECT event_type FROM audit_logs WHERE resource_id = $1 OR resource_id = $2",
@@ -863,6 +865,9 @@ def test_repeated_access_per_read_audit_logging(
             headers=headers_req,
         )
         assert res.status_code == 200
+
+    import time
+    time.sleep(0.3)
 
     new_count = db_fetchval(
         "SELECT count(*) FROM audit_logs WHERE event_type = 'BREAK_GLASS_PAPER_ASSEMBLED' AND resource_id = $1",

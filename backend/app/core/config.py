@@ -113,6 +113,30 @@ class Settings(BaseSettings):
     def rate_limit_candidate(self) -> str:
         return "200000/minute" if self.benchmark_mode else "200/minute"
 
+    @property
+    def rate_limit_mfa(self) -> str:
+        return "1000/minute" if self.benchmark_mode else "30/minute"
+
+    @property
+    def rate_limit_break_glass(self) -> str:
+        return "1000/minute" if self.benchmark_mode else "60/minute"
+
+    @property
+    def rate_limit_reviewer(self) -> str:
+        return "2000/minute" if self.benchmark_mode else "120/minute"
+
+    @property
+    def rate_limit_candidate_question(self) -> str:
+        return "200000/minute" if self.benchmark_mode else "300/minute"
+
+    @property
+    def rate_limit_candidate_autosave(self) -> str:
+        return "200000/minute" if self.benchmark_mode else "600/minute"
+
+    @property
+    def rate_limit_candidate_heartbeat(self) -> str:
+        return "200000/minute" if self.benchmark_mode else "120/minute"
+
     # ── Threshold Authorization ───────────────────────────────────────────────
     # Number of release authorities required to approve exam release
     default_release_threshold: int = 3

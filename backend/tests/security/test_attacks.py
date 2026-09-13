@@ -41,7 +41,10 @@ def exam_id(client, admin_token):
     assert len(exams) > 0, "No exams seeded"
     # Find the released one from seed_demo
     for exam in exams:
-        if exam.get("status") == "RELEASED" or exam.get("title") == "B-SEA Global Security Certification 2026":
+        if exam.get("title") == "B-SEA Global Security Certification 2026":
+            return exam["id"]
+    for exam in exams:
+        if exam.get("status") == "RELEASED":
             return exam["id"]
     return exams[-1]["id"]  # Fallback to the oldest one
 

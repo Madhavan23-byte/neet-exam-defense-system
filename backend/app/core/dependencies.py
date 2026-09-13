@@ -119,5 +119,91 @@ def rate_limit_key_layered(request: Request) -> str:
     # Therefore, for unauthenticated routes, we rely primarily on IP.
     return get_client_ip(request)
 
+import os
+import logging
+from typing import Callable, Any
 from slowapi import Limiter
-limiter = Limiter(key_func=rate_limit_key_layered)
+from slowapi.errors import RateLimitExceeded
+from app.core.config import get_settings
+
+settings = get_settings()
+logger = logging.getLogger("bsea.limiter")
+
+SECURITY_SENSITIVE_PATHS = (
+    "/api/v1/auth/",
+    "/api/v1/candidate/auth/",
+    "/api/v1/break-glass/",
+    "/api/v1/release/",
+    "/api/v1/users/",
+    "/api/v1/organizations/",
+)
+
+
+def is_security_sensitive_path(path: str) -> bool:
+    """Determine if a request path is security-sensitive."""
+    return any(path.startswith(prefix) for prefix in SECURITY_SENSITIVE_PATHS)
+
+
+class BSEALimiter(Limiter):
+    """
+    B-SEA Distributed Rate Limiter with Differentiated Failure Handling.
+
+    Security Invariants:
+    1. Distributed shared state via Redis across horizontally scaled workers.
+    2. Under Redis failure:
+       - Security-sensitive endpoints FAIL CLOSED (503 Service Unavailable).
+       - Candidate availability-sensitive endpoints DEGRADE GRACEFULLY to allow
+         authoritative PostgreSQL validation to proceed without disruption.
+    """
+
+    def _check_request_limit(
+        self,
+        request: Request,
+        endpoint_func: Optional[Callable[..., Any]],
+        in_middleware: bool = True,
+    ) -> None:
+        try:
+            super()._check_request_limit(request, endpoint_func, in_middleware)
+        except RateLimitExceeded:
+            raise
+        except Exception as e:
+            # Differentiated Redis failure policy
+            path = ""
+            if hasattr(request, "url") and request.url:
+                path = str(request.url.path)
+            elif isinstance(request, dict):
+                path = request.get("path", "")
+
+            if is_security_sensitive_path(path):
+                logger.error(
+                    "Redis rate-limit backend failure on security-sensitive endpoint '%s': %s. FAILING CLOSED.",
+                    path,
+                    e,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Security verification service temporarily unavailable (Rate limiter fail-closed). Please retry later.",
+                )
+            else:
+                logger.warning(
+                    "Redis rate-limit backend failure on candidate endpoint '%s': %s. Degrading gracefully.",
+                    path,
+                    e,
+                )
+                return
+
+
+def get_rate_limit_storage_uri() -> str:
+    """Return storage URI for rate limiter: Redis in production, memory in testing unless overridden."""
+    explicit = os.environ.get("BSEA_RATE_LIMIT_STORAGE")
+    if explicit:
+        return explicit
+    if os.environ.get("TESTING") == "1" or settings.environment == "testing":
+        return "memory://"
+    return settings.redis_url
+
+
+limiter = BSEALimiter(
+    key_func=rate_limit_key_layered,
+    storage_uri=get_rate_limit_storage_uri(),
+)

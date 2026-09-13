@@ -73,6 +73,7 @@ async def login(
 
 
 @router.post("/mfa/verify")
+@limiter.limit(settings.rate_limit_mfa)
 async def verify_mfa(
     body: MFAVerifyRequest,
     request: Request,

@@ -95,13 +95,19 @@ services:
       SECRET_KEY: ${SECRET_KEY:-bsea_jwt_secret_change_me_in_production_minimum_64_chars_abc123}
       MOCK_KMS_MASTER_KEY: ${MOCK_KMS_MASTER_KEY:-bsea_kms_master_key_change_me_32ch}
       MOCK_KMS_SIGNING_KEY: ${MOCK_KMS_SIGNING_KEY:-bsea_ed25519_seed_32_bytes_change_}
-      ENVIRONMENT: development
+      ENVIRONMENT: production-local
+      GUNICORN_WORKERS: 4
       LOG_LEVEL: INFO
-      CORS_ORIGINS: "http://localhost:5173,http://localhost:3000"
+      CORS_ORIGINS: "http://localhost:5173,http://localhost:3000,http://localhost"
       ACCESS_TOKEN_EXPIRE_MINUTES: "30"
       REFRESH_TOKEN_EXPIRE_DAYS: "7"
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     depends_on:
       db:
         condition: service_healthy
@@ -109,29 +115,27 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-    volumes:
-      - ./backend:/app
     networks:
       - bsea-internal
       - bsea-public
 
-  # ─── React Frontend (dev server) ───────────────────────────────────────────
+  # ─── React Frontend (Nginx Production Packaging) ──────────────────────────
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile.dev
+      dockerfile: Dockerfile
     container_name: bsea-frontend
-    environment:
-      VITE_API_URL: http://localhost:8000
-      VITE_APP_NAME: B-SEA
-      VITE_ENVIRONMENT: development
     ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
+      - "80:80"
+      - "5173:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/nginx-health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     networks:
       - bsea-public
 

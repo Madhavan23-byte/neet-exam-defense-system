@@ -41,11 +41,15 @@ settings = get_settings()
 
 _is_sqlite = settings.database_url.startswith("sqlite")
 
-# SQLite uses NullPool to avoid file-level locking from stale pooled connections.
+import os
+_use_null_pool = _is_sqlite or os.environ.get("TESTING") == "1" or settings.environment == "testing"
+
+# SQLite and test environments use NullPool to avoid stale connection reuse across test event loops.
 # PostgreSQL uses the full async pool configured by DB_POOL_SIZE / DB_MAX_OVERFLOW.
 _engine_kwargs = {}
-if _is_sqlite:
-    _engine_kwargs["connect_args"] = {"check_same_thread": False}
+if _use_null_pool:
+    if _is_sqlite:
+        _engine_kwargs["connect_args"] = {"check_same_thread": False}
     _engine_kwargs["poolclass"] = NullPool
 else:
     _engine_kwargs["pool_size"] = settings.db_pool_size

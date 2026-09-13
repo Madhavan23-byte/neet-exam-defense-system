@@ -85,3 +85,11 @@ credentials.json
 client_secret.json
 id_rsa
 id_rsa.pub
+
+# Terraform
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+.terraform/
+*.backup
