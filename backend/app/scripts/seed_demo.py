@@ -151,10 +151,13 @@ async def seed_demo_data():
             ("release_auth_2", "release2@bsea.demo", "Release Authority Kumar", "RELEASE_AUTHORITY"),
             ("release_auth_3", "release3@bsea.demo", "Release Authority Nair", "RELEASE_AUTHORITY"),
             ("auditor_1", "auditor@bsea.demo", "Independent Auditor", "AUDITOR"),
+            ("centre_admin", "centreadmin@bsea.demo", "Centre Administrator", "CENTRE_ADMIN"),
+            ("invigilator_1", "invigilator1@bsea.demo", "Invigilator Verma", "INVIGILATOR"),
             ("candidate_demo", "candidate@bsea.demo", "Demo Candidate", "CANDIDATE"),
         ]
 
         created_users = {}
+        admin_pwd_hash = await hash_password("BSeaDemo@2026")
         for username, email, full_name, role in users_config:
             user = User(
                 org_id=org.id,
@@ -162,7 +165,7 @@ async def seed_demo_data():
                 username=username,
                 full_name=full_name,
                 role=UserRoleEnum(role),
-                password_hash=await hash_password("BSeaDemo@2026"),  # Demo password
+                password_hash=admin_pwd_hash,  # Demo password
                 is_active=True,
             )
             db.add(user)
@@ -248,18 +251,37 @@ async def seed_demo_data():
                 exam._seeded_questions = []
             exam._seeded_questions.append(question.id)
 
-        # Create ExamForm
-        from app.core.models import ExamForm, FormStatus
-        form_data = b"FORM_A:" + b":".join([q_id.encode() for q_id in exam._seeded_questions])
-        form = ExamForm(
+        # Create Examination Centre
+        from app.core.models import Centre, CentreStatus
+        centre = Centre(
+            org_id=org.id,
             exam_id=exam.id,
-            form_label="A",
-            question_ids=exam._seeded_questions,
-            option_orders={},
-            integrity_hash=compute_integrity_hash(form_data),
-            status=FormStatus.ACTIVE,
+            name="New Delhi National CBT Centre 01",
+            centre_code="ND-CBT-001",
+            location="Institutional Area, Sector 12, Dwarka, New Delhi",
+            country="India",
+            status=CentreStatus.ACTIVE,
+            device_count=500,
+            admin_id=created_users["centre_admin"].id,
+            checked_in_at=datetime.now(timezone.utc),
         )
-        db.add(form)
+        db.add(centre)
+
+        # Create multiple ExamForms (Forms A, B, C, D)
+        from app.core.models import ExamForm, FormStatus
+        for form_label in ["A", "B", "C", "D"]:
+            shift = ord(form_label) - ord("A")
+            q_ids = exam._seeded_questions[shift:] + exam._seeded_questions[:shift]
+            form_data = f"FORM_{form_label}:".encode() + b":".join([q_id.encode() for q_id in q_ids])
+            form = ExamForm(
+                exam_id=exam.id,
+                form_label=form_label,
+                question_ids=q_ids,
+                option_orders={},
+                integrity_hash=compute_integrity_hash(form_data),
+                status=FormStatus.ACTIVE,
+            )
+            db.add(form)
 
         # Create exam blueprint
         blueprint_config = {
@@ -297,6 +319,41 @@ async def seed_demo_data():
             identity_verified=True,
         )
         db.add(candidate)
+
+        # Create 5,000 deterministic synthetic candidates
+        print("   Generating 5,000 synthetic candidates in batches of 1,000...")
+        test_pwd_hash = await hash_password("BSeaTest@2026")
+        batch_size = 1000
+        for b_start in range(1, 5001, batch_size):
+            b_end = min(b_start + batch_size, 5001)
+            cand_users = []
+            for idx in range(b_start, b_end):
+                cand_user = User(
+                    org_id=org.id,
+                    email=f"candidate_{idx:06d}@test.bsea.local",
+                    username=f"cand_{idx:06d}",
+                    full_name=f"Synthetic Candidate {idx:06d}",
+                    role=UserRoleEnum.CANDIDATE,
+                    password_hash=test_pwd_hash,
+                    is_active=True,
+                )
+                db.add(cand_user)
+                cand_users.append(cand_user)
+            await db.flush()
+
+            for cand_user, idx in zip(cand_users, range(b_start, b_end)):
+                cand = Candidate(
+                    org_id=org.id,
+                    user_id=cand_user.id,
+                    registration_number=f"BSEA-TEST-{idx:06d}",
+                    full_name=cand_user.full_name,
+                    email_hash=compute_integrity_hash(cand_user.email.encode("utf-8")),
+                    phone_hash=compute_integrity_hash(f"+9198000{idx:05d}".encode("utf-8")),
+                    identity_verified=True,
+                )
+                db.add(cand)
+            await db.flush()
+            print(f"   Batch {b_start}-{b_end-1} flushed.")
 
         # Add release approvals (threshold met for demo)
         from app.core.models import ReleaseApproval
@@ -338,14 +395,12 @@ async def seed_demo_data():
 
         await db.commit()
 
-        print("✅ B-SEA Demo data seeded successfully")
+        print("[SUCCESS] B-SEA Demo data seeded successfully")
         print(f"   Organization: {org.name} ({org.id})")
         print(f"   Exam: {exam.title} ({exam.id})")
         print(f"   Demo login: admin / BSeaDemo@2026")
         print(f"   Candidate registration: BSEA-2026-DEMO-001")
-import asyncio; asyncio.run(seed_demo_data())
-
-
+        print("   Synthetic candidates: BSEA-TEST-000001 through BSEA-TEST-005000 (Password: BSeaTest@2026)")
 
 if __name__ == '__main__':
     import asyncio

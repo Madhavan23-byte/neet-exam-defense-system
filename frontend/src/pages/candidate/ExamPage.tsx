@@ -21,6 +21,11 @@ export default function ExamPage() {
   const [tabSwitches, setTabSwitches] = useState(0);
   const [timeRemaining, setTimeRemaining] = useState('');
 
+  // Accessible Submission Confirmation Modal state
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
   // Load question
   const loadQuestion = useCallback(async (index: number) => {
     if (!sessionToken) return;
@@ -161,15 +166,29 @@ export default function ExamPage() {
     } catch (e) { }
   };
 
-  const handleSubmitExam = async () => {
+  const handleSubmitExam = () => {
     if (!sessionToken) return;
-    if (confirm('Are you sure you want to submit the examination? This cannot be undone.')) {
-      try {
-        await candidateApi.submit(sessionToken);
-        navigate('/candidate/result');
-      } catch (e) {
-        alert('Failed to submit exam. Please try again or contact invigilator.');
-      }
+    setSubmitError(null);
+    setShowConfirmModal(true);
+  };
+
+  const handleCloseSubmitModal = () => {
+    if (isSubmitting) return;
+    setShowConfirmModal(false);
+    setSubmitError(null);
+  };
+
+  const handleConfirmFinalSubmit = async () => {
+    if (!sessionToken || isSubmitting) return;
+    setIsSubmitting(true);
+    setSubmitError(null);
+    try {
+      await candidateApi.submit(sessionToken);
+      navigate('/candidate/result');
+    } catch (e: any) {
+      setIsSubmitting(false);
+      const detail = e?.response?.data?.detail || 'Failed to submit exam. Please try again or contact invigilator.';
+      setSubmitError(detail);
     }
   };
 
@@ -354,6 +373,104 @@ export default function ExamPage() {
           </div>
         </div>
       </div>
+
+      {/* Accessible Submission Confirmation Modal */}
+      {showConfirmModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="submit-modal-title"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' && !isSubmitting) handleCloseSubmitModal();
+          }}
+          tabIndex={-1}
+        >
+          <div className="w-full max-w-lg card-elevated border-red-500/30 p-6 space-y-6 shadow-2xl relative">
+            <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
+              <div className="w-10 h-10 rounded-lg bg-red-500/20 text-red-400 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 id="submit-modal-title" className="text-lg font-bold text-white">
+                  Confirm Examination Submission
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Please review your question response status before finalizing.
+                </p>
+              </div>
+            </div>
+
+            {/* Question status summary cards */}
+            <div className="grid grid-cols-3 gap-3 text-center">
+              <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30">
+                <div className="text-2xl font-bold text-emerald-400 font-mono">
+                  {Object.values(statusMap).filter((s) => s === 'answered').length}
+                </div>
+                <div className="text-xs text-slate-400 mt-1 font-medium">Answered</div>
+              </div>
+              <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
+                <div className="text-2xl font-bold text-amber-400 font-mono">
+                  {Object.values(statusMap).filter((s) => s === 'marked').length}
+                </div>
+                <div className="text-xs text-slate-400 mt-1 font-medium">Marked for Review</div>
+              </div>
+              <div className="p-3 rounded-lg bg-slate-800/60 border border-slate-700">
+                <div className="text-2xl font-bold text-slate-300 font-mono">
+                  {Math.max(
+                    0,
+                    totalQuestions -
+                      Object.values(statusMap).filter((s) => s === 'answered').length -
+                      Object.values(statusMap).filter((s) => s === 'marked').length
+                  )}
+                </div>
+                <div className="text-xs text-slate-400 mt-1 font-medium">Unanswered</div>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-lg bg-red-950/30 border border-red-900/40 text-xs text-red-300 space-y-2">
+              <div className="font-bold flex items-center gap-2 text-red-400">
+                <Shield className="w-4 h-4" /> Irreversible Final Submission
+              </div>
+              <p>
+                Once submitted, all responses will be locked and evaluated. Your ephemeral session keys will be purged from this device. You will not be able to return to this examination.
+              </p>
+            </div>
+
+            {submitError && (
+              <div className="p-3 rounded-lg bg-red-500/20 border border-red-500/40 text-xs text-red-200 font-medium">
+                {submitError}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                className="btn btn-ghost text-sm"
+                onClick={handleCloseSubmitModal}
+                disabled={isSubmitting}
+              >
+                Cancel / Return to Exam
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger text-sm font-semibold flex items-center gap-2"
+                onClick={handleConfirmFinalSubmit}
+                disabled={isSubmitting}
+                autoFocus
+              >
+                {isSubmitting ? (
+                  <>
+                    <Shield className="w-4 h-4 animate-spin" /> Submitting...
+                  </>
+                ) : (
+                  'Confirm & Submit Exam'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

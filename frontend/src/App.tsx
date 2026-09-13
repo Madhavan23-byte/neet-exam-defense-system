@@ -19,6 +19,9 @@ import ReleasePage from './pages/admin/ReleasePage';
 // Authoring
 import AuthoringPage from './pages/authoring/AuthoringPage';
 
+// Reviewer
+import ReviewerPage from './pages/reviewer/ReviewerPage';
+
 // Candidate
 import CandidateLoginPage from './pages/candidate/CandidateLoginPage';
 import ExamPage from './pages/candidate/ExamPage';
@@ -38,6 +41,9 @@ export default function App() {
       <Route path="/candidate/login" element={<CandidateLoginPage />} />
       <Route path="/candidate/exam" element={<ExamPage />} />
       <Route path="/candidate/result" element={<ResultPage />} />
+
+      {/* Reviewer Portal */}
+      <Route path="/reviewer" element={<ProtectedRoute><ReviewerPage /></ProtectedRoute>} />
 
       {/* Protected Admin */}
       <Route path="/admin" element={<ProtectedRoute><AdminLayout /></ProtectedRoute>}>

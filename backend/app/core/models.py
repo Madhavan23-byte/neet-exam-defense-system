@@ -68,6 +68,21 @@ class QuestionStatus(str, PyEnum):
     QUARANTINED = "QUARANTINED"
 
 
+class QuestionAssignmentStatus(str, PyEnum):
+    ACTIVE = "ACTIVE"
+    IN_REVIEW = "IN_REVIEW"
+    COMPLETED = "COMPLETED"
+    REVOKED = "REVOKED"
+
+
+class ReviewPurpose(str, PyEnum):
+    TECHNICAL_REVIEW = "TECHNICAL_REVIEW"
+    SYLLABUS_REVIEW = "SYLLABUS_REVIEW"
+    LANGUAGE_REVIEW = "LANGUAGE_REVIEW"
+    DISTRACTOR_REVIEW = "DISTRACTOR_REVIEW"
+    KEY_VERIFICATION = "KEY_VERIFICATION"
+
+
 class ExamStatus(str, PyEnum):
     DRAFT = "DRAFT"
     BLUEPRINT_CREATED = "BLUEPRINT_CREATED"
@@ -275,6 +290,7 @@ class Question(Base):
     exam: Mapped["Exam"] = relationship("Exam", back_populates="questions")
     author: Mapped["User"] = relationship("User", back_populates="questions", foreign_keys=[author_id])
     reviews: Mapped[List["QuestionReview"]] = relationship("QuestionReview", back_populates="question")
+    assignments: Mapped[List["QuestionAssignment"]] = relationship("QuestionAssignment", back_populates="question", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_questions_exam_status", "exam_id", "status"),
@@ -297,6 +313,44 @@ class QuestionReview(Base):
 
     question: Mapped["Question"] = relationship("Question", back_populates="reviews")
     reviewer: Mapped["User"] = relationship("User")
+
+
+# ── Question Assignment (Sharding) ───────────────────────────────────────────
+
+class QuestionAssignment(Base):
+    __tablename__ = "question_assignments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    question_id: Mapped[str] = mapped_column(ForeignKey("questions.id", ondelete="CASCADE"), nullable=False)
+    reviewer_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    exam_id: Mapped[str] = mapped_column(ForeignKey("exams.id"), nullable=False)
+    assigned_by: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    purpose: Mapped[ReviewPurpose] = mapped_column(Enum(ReviewPurpose), default=ReviewPurpose.TECHNICAL_REVIEW, nullable=False)
+    status: Mapped[QuestionAssignmentStatus] = mapped_column(Enum(QuestionAssignmentStatus), default=QuestionAssignmentStatus.ACTIVE, nullable=False)
+    assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    revocation_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    question: Mapped["Question"] = relationship("Question", back_populates="assignments")
+    reviewer: Mapped["User"] = relationship("User", foreign_keys=[reviewer_id])
+    assigner: Mapped["User"] = relationship("User", foreign_keys=[assigned_by])
+    exam: Mapped["Exam"] = relationship("Exam")
+
+    __table_args__ = (
+        Index(
+            "uix_active_question_reviewer_assignment",
+            "question_id",
+            "reviewer_id",
+            unique=True,
+            postgresql_where=text("status IN ('ACTIVE', 'IN_REVIEW')"),
+        ),
+        Index("ix_qassign_reviewer_status", "reviewer_id", "status"),
+        Index("ix_qassign_exam_status", "exam_id", "status"),
+        Index("ix_qassign_question_status", "question_id", "status"),
+    )
+
 
 
 # ── Exam Form ─────────────────────────────────────────────────────────────────

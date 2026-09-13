@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
@@ -25,7 +26,7 @@ from app.core.models import (
     AuditResult, Candidate, CandidateSession, Exam, ExamForm, ExamStatus, FormStatus,
     Question, Response, SessionStatus, User, UserRoleEnum
 )
-from app.core.security import hash_password, verify_password, generate_secure_token, hash_token
+from app.core.security import hash_password, verify_password, generate_secure_token, hash_token, hash_ip
 from app.crypto.kms_interface import EncryptedBlob, compute_integrity_hash, get_kms
 from app.modules.audit.service import AuditService
 from app.modules.security.service import SecurityService
@@ -136,6 +137,15 @@ async def candidate_login(
     candidate = cand_result.scalar_one_or_none()
     
     if not candidate or not candidate.user_id:
+        await audit.log(
+            event_type="CANDIDATE_LOGIN_FAILED",
+            result=AuditResult.FAILURE,
+            resource_type="exam",
+            resource_id=body.exam_id,
+            ip_hash=hash_ip(ip) if ip else None,
+            metadata={"registration_number": body.registration_number},
+            risk_score=0.3
+        )
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     # Verify password against linked user account
@@ -194,8 +204,9 @@ async def candidate_login(
     session_key = kms.derive_session_key(session_token[:16], body.exam_id)
     session_key_encrypted = kms.encrypt_with_session_key(session_key, session_key)  # Protect session key
 
+    candidate_id = candidate.id
     session = CandidateSession(
-        candidate_id=candidate.id,
+        candidate_id=candidate_id,
         exam_id=body.exam_id,
         form_id=form.id,
         session_token_hash=hash_token(session_token),
@@ -207,7 +218,37 @@ async def candidate_login(
         ip_hash=hashlib.sha256(ip.encode()).hexdigest()[:32],
     )
     db.add(session)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        # Narrow check: Only handle the expected uix_active_session_candidate_exam unique constraint violation
+        is_active_session_race = False
+        orig = getattr(exc, "orig", None)
+        if orig:
+            cause = getattr(orig, "__cause__", None)
+            if cause and getattr(cause, "constraint_name", None) == "uix_active_session_candidate_exam":
+                is_active_session_race = True
+            elif getattr(orig, "pgcode", None) == "23505" and "uix_active_session_candidate_exam" in str(exc):
+                is_active_session_race = True
+        if not is_active_session_race and "uix_active_session_candidate_exam" in str(exc):
+            is_active_session_race = True
+
+        if is_active_session_race:
+            await audit.log(
+                event_type="CONCURRENT_SESSION_ATTEMPT",
+                result=AuditResult.BLOCKED,
+                actor_id=candidate_id,
+                resource_type="exam",
+                resource_id=body.exam_id,
+                risk_score=0.8,
+            )
+            raise HTTPException(
+                status_code=409,
+                detail="An active session already exists for this candidate."
+            )
+        # Any other integrity error must NOT be masked as 409
+        raise
 
     await audit.log(
         event_type="CANDIDATE_SESSION_STARTED",
@@ -403,13 +444,53 @@ async def submit_exam(
     body: HeartbeatRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Final exam submission."""
-    session, candidate = await _validate_session(body.session_token, db)
+    """
+    Final exam submission.
+    
+    Security & Concurrency:
+    - Validates candidate session token.
+    - Rejects duplicate submission with HTTP 409 Conflict.
+    - Atomically updates session status to SUBMITTED.
+    - Triggers evaluation and persists Result record.
+    - Emits audit log event.
+    - Destroys access to further questions.
+    """
+    token_hash = hash_token(body.session_token)
+    sess_result = await db.execute(
+        select(CandidateSession)
+        .where(CandidateSession.session_token_hash == token_hash)
+        .with_for_update()
+    )
+    session = sess_result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
 
+    if session.status == SessionStatus.SUBMITTED:
+        raise HTTPException(status_code=409, detail="Exam already submitted")
+
+    if session.status != SessionStatus.ACTIVE:
+        raise HTTPException(status_code=403, detail=f"Session is in {session.status.value} status")
+
+    # Check expiry
+    if session.expires_at:
+        exp = session.expires_at.replace(tzinfo=timezone.utc) if session.expires_at.tzinfo is None else session.expires_at
+        if datetime.now(timezone.utc) > exp:
+            session.status = SessionStatus.EXPIRED
+            await db.commit()
+            raise HTTPException(status_code=400, detail="Examination time has expired")
+
+    cand_result = await db.execute(
+        select(Candidate).where(Candidate.id == session.candidate_id)
+    )
+    candidate = cand_result.scalar_one_or_none()
+
     session.status = SessionStatus.SUBMITTED
     session.submitted_at = datetime.now(timezone.utc)
+
+    # Trigger evaluation and Result persistence
+    from app.modules.evaluation.service import EvaluationService
+    eval_service = EvaluationService(db)
+    result = await eval_service.evaluate_session(session.id)
 
     audit = AuditService(db)
     await audit.log(
@@ -418,17 +499,85 @@ async def submit_exam(
         actor_id=candidate.id if candidate else None,
         resource_type="exam_session",
         resource_id=session.id,
+        metadata={"total_score": result.get("total_score")},
     )
 
-    # Trigger evaluation
-    from app.modules.evaluation.service import EvaluationService
-    eval_service = EvaluationService(db)
-    result = await eval_service.evaluate_session(session.id)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Exam already submitted")
+
 
     return {
         "success": True,
+        "session_id": session.id,
         "submitted_at": session.submitted_at.isoformat(),
         "result": result,
+    }
+
+
+@router.get("/session/result")
+async def get_candidate_result(
+    session_token: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Retrieve candidate examination result receipt.
+    
+    Security:
+    - Session token must be valid and authenticated.
+    - Session must be in SUBMITTED status.
+    - Answer keys and internal questions are NEVER returned.
+    """
+    from app.core.models import Result
+
+    token_hash = hash_token(session_token)
+    sess_result = await db.execute(
+        select(CandidateSession).where(CandidateSession.session_token_hash == token_hash)
+    )
+    session = sess_result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    if session.status != SessionStatus.SUBMITTED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Examination has not been submitted (current status: {session.status.value})"
+        )
+
+    result_query = await db.execute(
+        select(Result).where(Result.session_id == session.id)
+    )
+    result = result_query.scalar_one_or_none()
+
+    if not result:
+        return {
+            "success": True,
+            "session_id": session.id,
+            "candidate_id": session.candidate_id,
+            "exam_id": session.exam_id,
+            "status": session.status.value,
+            "submitted_at": session.submitted_at.isoformat() if session.submitted_at else None,
+            "result_available": False,
+            "message": "Submission received. Result calculation in progress.",
+        }
+
+    return {
+        "success": True,
+        "session_id": session.id,
+        "candidate_id": session.candidate_id,
+        "exam_id": session.exam_id,
+        "status": session.status.value,
+        "submitted_at": session.submitted_at.isoformat() if session.submitted_at else None,
+        "result_available": True,
+        "total_score": result.total_score,
+        "max_score": result.max_score,
+        "attempted": result.attempted,
+        "correct": result.correct,
+        "incorrect": result.incorrect,
+        "skipped": result.skipped,
+        "percentage": round((result.total_score / result.max_score * 100) if result.max_score > 0 else 0, 2),
     }
 
 

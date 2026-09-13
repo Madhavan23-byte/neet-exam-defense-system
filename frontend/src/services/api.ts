@@ -57,12 +57,22 @@ export const examsApi = {
 // ── Questions ─────────────────────────────────────────────────────────────────
 export const questionsApi = {
   list: (examId: string) => api.get(`/questions/exam/${examId}`),
+  getDetail: (id: string) => api.get(`/questions/${id}`),
+  getMyAssignments: (examId?: string) =>
+    api.get('/questions/assignments/me' + (examId ? `?exam_id=${encodeURIComponent(examId)}` : '')),
   create: (data: any) => api.post('/questions/', data),
   submit: (id: string) => api.post(`/questions/${id}/submit`),
+  startReview: (assignmentId: string) => api.post(`/questions/assignments/${assignmentId}/start`),
+  submitReview: (questionId: string, assignmentId: string, verdict: string, comments?: string) =>
+    api.post(`/questions/${questionId}/review`, { assignment_id: assignmentId, verdict, comments }),
   approve: (id: string, comments: string) =>
     api.post(`/questions/${id}/approve`, { verdict: 'APPROVED', comments }),
   reject: (id: string, comments: string) =>
     api.post(`/questions/${id}/reject`, { verdict: 'REJECTED', comments }),
+  shard: (examId: string, data: any) => api.post(`/questions/exam/${examId}/shard`, data),
+  assign: (questionId: string, data: any) => api.post(`/questions/${questionId}/assign`, data),
+  reassign: (assignmentId: string, data: any) =>
+    api.post(`/questions/assignments/${assignmentId}/reassign`, data),
 };
 
 // ── Release ───────────────────────────────────────────────────────────────────
@@ -91,6 +101,8 @@ export const candidateApi = {
     }),
   submit: (token: string) =>
     api.post('/candidate/session/submit', { session_token: token, current_question_index: 0 }),
+  getResult: (token: string) =>
+    api.get(`/candidate/session/result?session_token=${encodeURIComponent(token)}`),
   reportEvent: (token: string, event_type: string, details?: any) =>
     api.post('/candidate/session/event', { session_token: token, event_type, details }),
 };

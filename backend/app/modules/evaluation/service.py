@@ -24,6 +24,21 @@ class EvaluationService:
         if not session:
             return {"error": "Session not found"}
 
+        # Check if already evaluated (idempotency guard)
+        existing_res = await self.db.execute(
+            select(Result).where(Result.session_id == session_id)
+        )
+        existing_obj = existing_res.scalar_one_or_none()
+        if existing_obj:
+            return {
+                "total_score": existing_obj.total_score,
+                "max_score": existing_obj.max_score,
+                "correct": existing_obj.correct,
+                "incorrect": existing_obj.incorrect,
+                "skipped": existing_obj.skipped,
+                "percentage": round((existing_obj.total_score / existing_obj.max_score * 100) if existing_obj.max_score > 0 else 0, 2),
+            }
+
         # Get all responses
         resp_result = await self.db.execute(
             select(Response).where(Response.session_id == session_id)
