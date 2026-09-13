@@ -83,6 +83,20 @@ class ReviewPurpose(str, PyEnum):
     KEY_VERIFICATION = "KEY_VERIFICATION"
 
 
+class QuestionOperation(str, PyEnum):
+    VIEW = "VIEW"
+    REVIEW = "REVIEW"
+    APPROVE = "APPROVE"
+    REJECT = "REJECT"
+
+
+class AccessGrantStatus(str, PyEnum):
+    GRANTED = "GRANTED"
+    ACTIVE = "ACTIVE"
+    EXPIRED = "EXPIRED"
+    REVOKED = "REVOKED"
+
+
 class ExamStatus(str, PyEnum):
     DRAFT = "DRAFT"
     BLUEPRINT_CREATED = "BLUEPRINT_CREATED"
@@ -291,6 +305,7 @@ class Question(Base):
     author: Mapped["User"] = relationship("User", back_populates="questions", foreign_keys=[author_id])
     reviews: Mapped[List["QuestionReview"]] = relationship("QuestionReview", back_populates="question")
     assignments: Mapped[List["QuestionAssignment"]] = relationship("QuestionAssignment", back_populates="question", cascade="all, delete-orphan")
+    access_grants: Mapped[List["QuestionAccessGrant"]] = relationship("QuestionAccessGrant", back_populates="question", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_questions_exam_status", "exam_id", "status"),
@@ -337,6 +352,7 @@ class QuestionAssignment(Base):
     reviewer: Mapped["User"] = relationship("User", foreign_keys=[reviewer_id])
     assigner: Mapped["User"] = relationship("User", foreign_keys=[assigned_by])
     exam: Mapped["Exam"] = relationship("Exam")
+    access_grants: Mapped[List["QuestionAccessGrant"]] = relationship("QuestionAccessGrant", back_populates="assignment", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index(
@@ -349,6 +365,48 @@ class QuestionAssignment(Base):
         Index("ix_qassign_reviewer_status", "reviewer_id", "status"),
         Index("ix_qassign_exam_status", "exam_id", "status"),
         Index("ix_qassign_question_status", "question_id", "status"),
+    )
+
+
+# ── Ephemeral Question Access Grant (Phase 3A) ────────────────────────────────
+
+class QuestionAccessGrant(Base):
+    __tablename__ = "question_access_grants"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    question_id: Mapped[str] = mapped_column(ForeignKey("questions.id", ondelete="CASCADE"), nullable=False)
+    exam_id: Mapped[str] = mapped_column(ForeignKey("exams.id"), nullable=False)
+    reviewer_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    assignment_id: Mapped[str] = mapped_column(ForeignKey("question_assignments.id", ondelete="CASCADE"), nullable=False)
+    purpose: Mapped[ReviewPurpose] = mapped_column(Enum(ReviewPurpose), nullable=False)
+    operation: Mapped[QuestionOperation] = mapped_column(Enum(QuestionOperation), nullable=False)
+    status: Mapped[AccessGrantStatus] = mapped_column(Enum(AccessGrantStatus), default=AccessGrantStatus.GRANTED, nullable=False)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    revocation_reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    session_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    correlation_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    question: Mapped["Question"] = relationship("Question", back_populates="access_grants")
+    assignment: Mapped["QuestionAssignment"] = relationship("QuestionAssignment", back_populates="access_grants")
+    reviewer: Mapped["User"] = relationship("User", foreign_keys=[reviewer_id])
+    exam: Mapped["Exam"] = relationship("Exam")
+    creator: Mapped["User"] = relationship("User", foreign_keys=[created_by])
+
+    __table_args__ = (
+        Index(
+            "uix_active_grant_assignment_operation",
+            "assignment_id",
+            "operation",
+            unique=True,
+            postgresql_where=text("status IN ('GRANTED', 'ACTIVE')"),
+        ),
+        Index("ix_qgrant_reviewer_status", "reviewer_id", "status"),
+        Index("ix_qgrant_assignment_status", "assignment_id", "status"),
+        Index("ix_qgrant_question_op", "question_id", "operation"),
     )
 
 

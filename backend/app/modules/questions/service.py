@@ -18,7 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import and_, or_, select
@@ -26,12 +26,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.models import (
+    AccessGrantStatus,
     AnswerKey,
     AuditResult,
     Exam,
+    ExamStatus,
     Question,
+    QuestionAccessGrant,
     QuestionAssignment,
     QuestionAssignmentStatus,
+    QuestionOperation,
     QuestionReview,
     QuestionStatus,
     ReviewPurpose,
@@ -46,6 +50,8 @@ from app.crypto.kms_interface import (
 )
 from app.modules.audit.service import AuditService
 from app.modules.auth.service import has_permission
+from app.modules.questions.policy import validate_operation_entitlement
+from app.modules.questions.risk import evaluate_access_risk, RiskContext
 
 
 class QuestionService:
@@ -120,6 +126,507 @@ class QuestionService:
             return True, question, None, ""
 
         return False, question, None, f"Role {actor.role.value} not authorized to access questions"
+
+    # ── EPHEMERAL AUTHORIZATION ENGINE (PHASE 3A) ─────────────────────────────
+
+    async def request_question_access(
+        self,
+        actor: User,
+        question_id: str,
+        operation: QuestionOperation,
+        purpose: Optional[ReviewPurpose] = None,
+        session_id: Optional[str] = None,
+        expires_in_minutes: Optional[int] = 30,
+    ) -> QuestionAccessGrant:
+        """
+        Phase A: Request an ephemeral access grant for a specific operation.
+        Validates the multi-factor security context and issues/activates a QuestionAccessGrant.
+        """
+        # 1. Fetch Question and Exam
+        q_res = await self.db.execute(select(Question).where(Question.id == question_id))
+        question = q_res.scalar_one_or_none()
+        if not question:
+            raise ValueError("Question not found")
+
+        exam_res = await self.db.execute(select(Exam).where(Exam.id == question.exam_id))
+        exam = exam_res.scalar_one_or_none()
+        if not exam:
+            raise ValueError("Exam not found")
+
+        if exam.status in [ExamStatus.CANCELLED, ExamStatus.FROZEN, ExamStatus.COMPLETED]:
+            raise PermissionError(f"Exam status is {exam.status.value}; question access is blocked")
+
+        # 2. Conflict of interest: author cannot review own question
+        if question.author_id == actor.id:
+            await self.audit.log(
+                event_type="ACCESS_DENIED",
+                result=AuditResult.FAILURE,
+                actor_id=actor.id,
+                actor_role=actor.role.value,
+                resource_type="question",
+                resource_id=question.id,
+                metadata={"reason": "Author self-review conflict of interest"},
+            )
+            raise PermissionError("Conflict of interest: Question setter cannot review or approve own question")
+
+        # 3. Role check
+        if actor.role not in [UserRoleEnum.REVIEWER, UserRoleEnum.MODERATOR]:
+            await self.audit.log(
+                event_type="ACCESS_DENIED",
+                result=AuditResult.FAILURE,
+                actor_id=actor.id,
+                actor_role=actor.role.value,
+                resource_type="question",
+                resource_id=question.id,
+                metadata={"reason": f"Role {actor.role.value} cannot obtain reviewer access grants"},
+            )
+            raise PermissionError(f"Role {actor.role.value} not authorized for reviewer access grants")
+
+        # 4. Fetch Assignment
+        assign_res = await self.db.execute(
+            select(QuestionAssignment).where(
+                QuestionAssignment.question_id == question_id,
+                QuestionAssignment.reviewer_id == actor.id,
+                QuestionAssignment.exam_id == question.exam_id,
+            )
+        )
+        assignment = assign_res.scalar_one_or_none()
+        if not assignment:
+            await self.audit.log(
+                event_type="ACCESS_DENIED",
+                result=AuditResult.FAILURE,
+                actor_id=actor.id,
+                actor_role=actor.role.value,
+                resource_type="question",
+                resource_id=question.id,
+                metadata={"reason": "No assignment found for this question"},
+            )
+            raise PermissionError("Access denied: no assignment found for this question")
+
+        # 5. Check Assignment Status
+        if assignment.status == QuestionAssignmentStatus.REVOKED:
+            await self.audit.log(
+                event_type="ACCESS_DENIED",
+                result=AuditResult.FAILURE,
+                actor_id=actor.id,
+                actor_role=actor.role.value,
+                resource_type="question",
+                resource_id=question.id,
+                metadata={"reason": "Assignment is revoked"},
+                risk_score=1.0,
+            )
+            raise PermissionError("Access denied: assignment has been revoked")
+
+        if assignment.status == QuestionAssignmentStatus.COMPLETED:
+            await self.audit.log(
+                event_type="ACCESS_DENIED",
+                result=AuditResult.FAILURE,
+                actor_id=actor.id,
+                actor_role=actor.role.value,
+                resource_type="question",
+                resource_id=question.id,
+                metadata={"reason": "Assignment is completed"},
+            )
+            raise PermissionError("Access denied: assignment has already been completed")
+
+        if assignment.status not in [QuestionAssignmentStatus.ACTIVE, QuestionAssignmentStatus.IN_REVIEW]:
+            raise PermissionError(f"Access denied: assignment status is {assignment.status.value}")
+
+        # 6. Purpose check
+        target_purpose = purpose or assignment.purpose
+        if target_purpose != assignment.purpose:
+            await self.audit.log(
+                event_type="ACCESS_DENIED",
+                result=AuditResult.FAILURE,
+                actor_id=actor.id,
+                actor_role=actor.role.value,
+                resource_type="question",
+                resource_id=question.id,
+                metadata={
+                    "reason": f"Purpose mismatch: assigned {assignment.purpose.value}, requested {target_purpose.value}"
+                },
+            )
+            raise PermissionError(f"Access denied: purpose mismatch - assigned purpose is {assignment.purpose.value}, requested {target_purpose.value}")
+
+        # 7. Intersectional entitlement policy check
+        is_entitled, err_msg = validate_operation_entitlement(target_purpose, operation, actor)
+        if not is_entitled:
+            await self.audit.log(
+                event_type="ACCESS_DENIED",
+                result=AuditResult.FAILURE,
+                actor_id=actor.id,
+                actor_role=actor.role.value,
+                resource_type="question",
+                resource_id=question.id,
+                metadata={"reason": err_msg},
+            )
+            raise PermissionError(err_msg)
+
+        # 8. Deterministic Risk Evaluation Hook
+        risk_ctx = RiskContext(
+            actor=actor,
+            question=question,
+            operation=operation,
+            purpose=target_purpose,
+            assignment=assignment,
+            session_id=session_id,
+            exam_status=exam.status,
+        )
+        risk_dec = evaluate_access_risk(risk_ctx)
+        if risk_dec.should_block:
+            await self.audit.log(
+                event_type="ACCESS_DENIED",
+                result=AuditResult.FAILURE,
+                actor_id=actor.id,
+                actor_role=actor.role.value,
+                resource_type="question",
+                resource_id=question.id,
+                metadata={"risk_flags": risk_dec.flags, "reason": risk_dec.reason},
+                risk_score=risk_dec.risk_score,
+            )
+            raise PermissionError(f"Access blocked by security policy: {risk_dec.reason}")
+
+        # 9. Existing Active Grant Check
+        now = datetime.now(timezone.utc)
+        existing_res = await self.db.execute(
+            select(QuestionAccessGrant).where(
+                QuestionAccessGrant.assignment_id == assignment.id,
+                QuestionAccessGrant.operation == operation,
+                QuestionAccessGrant.status.in_([
+                    AccessGrantStatus.GRANTED,
+                    AccessGrantStatus.ACTIVE,
+                ]),
+            )
+        )
+        existing_grant = existing_res.scalar_one_or_none()
+
+        if existing_grant:
+            if existing_grant.expires_at and now >= existing_grant.expires_at:
+                existing_grant.status = AccessGrantStatus.EXPIRED
+                await self.audit.log(
+                    event_type="ACCESS_EXPIRED",
+                    result=AuditResult.SUCCESS,
+                    actor_id=actor.id,
+                    actor_role=actor.role.value,
+                    resource_type="question_access_grant",
+                    resource_id=existing_grant.id,
+                    metadata={"assignment_id": assignment.id, "operation": operation.value},
+                )
+                await self.db.flush()
+            else:
+                if session_id and existing_grant.session_id != session_id:
+                    existing_grant.session_id = session_id
+                    await self.db.flush()
+                return existing_grant
+
+        # 10. Issue new QuestionAccessGrant
+        expires_at = None
+        if expires_in_minutes is not None:
+            expires_at = now + timedelta(minutes=expires_in_minutes)
+
+        correlation_id = secrets.token_hex(16)
+        grant = QuestionAccessGrant(
+            question_id=question.id,
+            exam_id=question.exam_id,
+            reviewer_id=actor.id,
+            assignment_id=assignment.id,
+            purpose=target_purpose,
+            operation=operation,
+            status=AccessGrantStatus.GRANTED,
+            issued_at=now,
+            expires_at=expires_at,
+            session_id=session_id,
+            created_by=actor.id,
+            correlation_id=correlation_id,
+        )
+        self.db.add(grant)
+
+        await self.audit.log(
+            event_type="ACCESS_REQUESTED",
+            result=AuditResult.SUCCESS,
+            actor_id=actor.id,
+            actor_role=actor.role.value,
+            resource_type="question_access_grant",
+            resource_id=grant.id,
+            metadata={
+                "question_id": question.id,
+                "exam_id": question.exam_id,
+                "assignment_id": assignment.id,
+                "purpose": target_purpose.value,
+                "operation": operation.value,
+                "correlation_id": correlation_id,
+                "session_id": session_id,
+            },
+            risk_score=risk_dec.risk_score,
+        )
+
+        await self.audit.log(
+            event_type="ACCESS_GRANTED",
+            result=AuditResult.SUCCESS,
+            actor_id=actor.id,
+            actor_role=actor.role.value,
+            resource_type="question_access_grant",
+            resource_id=grant.id,
+            metadata={
+                "question_id": question.id,
+                "assignment_id": assignment.id,
+                "operation": operation.value,
+                "correlation_id": correlation_id,
+            },
+        )
+
+        target_assignment_id = assignment.id
+        try:
+            await self.db.commit()
+            await self.db.refresh(grant)
+            return grant
+        except IntegrityError:
+            await self.db.rollback()
+            existing_res = await self.db.execute(
+                select(QuestionAccessGrant).where(
+                    QuestionAccessGrant.assignment_id == target_assignment_id,
+                    QuestionAccessGrant.operation == operation,
+                    QuestionAccessGrant.status.in_([
+                        AccessGrantStatus.GRANTED,
+                        AccessGrantStatus.ACTIVE,
+                    ]),
+                )
+            )
+            existing_grant = existing_res.scalar_one_or_none()
+            if existing_grant:
+                return existing_grant
+            raise
+
+    async def authorize_question_operation(
+        self,
+        actor: User,
+        question_id: str,
+        operation: QuestionOperation,
+        grant_id: Optional[str],
+        session_id: Optional[str] = None,
+    ) -> Tuple[Question, QuestionAssignment, QuestionAccessGrant]:
+        """
+        Phase B: Revalidates the complete security context before allowing a protected operation:
+        - grant_id must be provided (grant_id alone is NOT sufficient)
+        - Grant status must be GRANTED or ACTIVE (not EXPIRED, not REVOKED)
+        - Deterministic lazy expiration check
+        - Grant must belong to requesting actor
+        - Session context must match (jti)
+        - Question ID and Exam ID must match
+        - Operation must match
+        - Underlying QuestionAssignment must still be valid (ACTIVE or IN_REVIEW)
+        - Exam must not be FROZEN, CANCELLED, or COMPLETED
+        - Intersectional policy must still permit the operation
+        - Activates grant on first use (GRANTED -> ACTIVE)
+        """
+        if not grant_id:
+            await self.audit.log(
+                event_type="ACCESS_DENIED",
+                result=AuditResult.FAILURE,
+                actor_id=actor.id,
+                actor_role=actor.role.value,
+                resource_type="question",
+                resource_id=question_id,
+                metadata={"reason": "Missing required grant_id for protected operation", "operation": operation.value},
+            )
+            raise PermissionError("Access denied: grant_id is required for protected operations")
+
+        # 1. Fetch Grant
+        g_res = await self.db.execute(
+            select(QuestionAccessGrant).where(QuestionAccessGrant.id == grant_id)
+        )
+        grant = g_res.scalar_one_or_none()
+        if not grant:
+            await self.audit.log(
+                event_type="ACCESS_DENIED",
+                result=AuditResult.FAILURE,
+                actor_id=actor.id,
+                actor_role=actor.role.value,
+                resource_type="question_access_grant",
+                resource_id=grant_id,
+                metadata={"reason": "Invalid or non-existent grant_id"},
+            )
+            raise PermissionError("Access denied: invalid access grant")
+
+        now = datetime.now(timezone.utc)
+
+        # 2. Status and Expiration
+        if grant.status == AccessGrantStatus.REVOKED:
+            raise PermissionError("Access denied: grant has been revoked")
+
+        if grant.status == AccessGrantStatus.EXPIRED:
+            raise PermissionError("Access denied: grant has expired")
+
+        if grant.expires_at and now >= grant.expires_at:
+            grant.status = AccessGrantStatus.EXPIRED
+            await self.audit.log(
+                event_type="ACCESS_EXPIRED",
+                result=AuditResult.SUCCESS,
+                actor_id=actor.id,
+                actor_role=actor.role.value,
+                resource_type="question_access_grant",
+                resource_id=grant.id,
+                metadata={"reason": "Grant expired based on expires_at"},
+            )
+            await self.db.commit()
+            raise PermissionError("Access denied: access grant has expired")
+
+        if grant.status not in [AccessGrantStatus.GRANTED, AccessGrantStatus.ACTIVE]:
+            raise PermissionError(f"Access denied: grant status is {grant.status.value}")
+
+        # 3. Actor Identity Binding
+        if grant.reviewer_id != actor.id:
+            await self.audit.log(
+                event_type="ACCESS_DENIED",
+                result=AuditResult.FAILURE,
+                actor_id=actor.id,
+                actor_role=actor.role.value,
+                resource_type="question_access_grant",
+                resource_id=grant.id,
+                metadata={"reason": "Grant belongs to another user", "target_user": grant.reviewer_id},
+                risk_score=1.0,
+            )
+            raise PermissionError("Access denied: grant was issued to a different user")
+
+        # 4. Session Context Binding
+        if grant.session_id and session_id and grant.session_id != session_id:
+            await self.audit.log(
+                event_type="ACCESS_DENIED",
+                result=AuditResult.FAILURE,
+                actor_id=actor.id,
+                actor_role=actor.role.value,
+                resource_type="question_access_grant",
+                resource_id=grant.id,
+                metadata={"reason": "Session context mismatch", "expected": grant.session_id, "actual": session_id},
+                risk_score=0.9,
+            )
+            raise PermissionError("Access denied: session context mismatch")
+
+        # 5. Question & Operation Match
+        if grant.question_id != question_id:
+            await self.audit.log(
+                event_type="ACCESS_DENIED",
+                result=AuditResult.FAILURE,
+                actor_id=actor.id,
+                actor_role=actor.role.value,
+                resource_type="question_access_grant",
+                resource_id=grant.id,
+                metadata={"reason": "Grant question_id mismatch", "grant_q": grant.question_id, "target_q": question_id},
+            )
+            raise PermissionError("Access denied: grant does not apply to this question")
+
+        if grant.operation != operation:
+            await self.audit.log(
+                event_type="ACCESS_DENIED",
+                result=AuditResult.FAILURE,
+                actor_id=actor.id,
+                actor_role=actor.role.value,
+                resource_type="question_access_grant",
+                resource_id=grant.id,
+                metadata={"reason": "Grant operation mismatch", "grant_op": grant.operation.value, "target_op": operation.value},
+            )
+            raise PermissionError(f"Access denied: grant operation is {grant.operation.value}, requested {operation.value}")
+
+        # 6. Revalidate Underlying Assignment
+        assign_res = await self.db.execute(
+            select(QuestionAssignment).where(QuestionAssignment.id == grant.assignment_id)
+        )
+        assignment = assign_res.scalar_one_or_none()
+        if not assignment:
+            raise PermissionError("Access denied: underlying assignment no longer exists")
+
+        if assignment.reviewer_id != actor.id or assignment.question_id != question_id:
+            raise PermissionError("Access denied: assignment relationship mismatch")
+
+        if assignment.status == QuestionAssignmentStatus.REVOKED:
+            grant.status = AccessGrantStatus.REVOKED
+            grant.revoked_at = now
+            grant.revocation_reason = "Underlying assignment is revoked"
+            await self.audit.log(
+                event_type="ACCESS_REVOKED",
+                result=AuditResult.SUCCESS,
+                actor_id=actor.id,
+                actor_role=actor.role.value,
+                resource_type="question_access_grant",
+                resource_id=grant.id,
+                metadata={"reason": "Underlying assignment is revoked"},
+            )
+            await self.db.commit()
+            raise PermissionError("Access denied: underlying assignment has been revoked")
+
+        if assignment.status == QuestionAssignmentStatus.COMPLETED:
+            raise PermissionError("Access denied: underlying assignment has been completed")
+
+        if assignment.status not in [QuestionAssignmentStatus.ACTIVE, QuestionAssignmentStatus.IN_REVIEW]:
+            raise PermissionError(f"Access denied: assignment status is {assignment.status.value}")
+
+        # 7. Revalidate Question & Exam
+        q_res = await self.db.execute(select(Question).where(Question.id == question_id))
+        question = q_res.scalar_one_or_none()
+        if not question:
+            raise ValueError("Question not found")
+
+        exam_res = await self.db.execute(select(Exam).where(Exam.id == question.exam_id))
+        exam = exam_res.scalar_one_or_none()
+        if not exam:
+            raise ValueError("Exam not found")
+
+        if exam.status in [ExamStatus.CANCELLED, ExamStatus.FROZEN, ExamStatus.COMPLETED]:
+            raise PermissionError(f"Exam status is {exam.status.value}; question operations are blocked")
+
+        if grant.exam_id != question.exam_id:
+            raise PermissionError("Access denied: grant exam_id mismatch")
+
+        # 8. Intersectional Policy
+        is_entitled, err_msg = validate_operation_entitlement(grant.purpose, operation, actor)
+        if not is_entitled:
+            raise PermissionError(err_msg)
+
+        # 9. Transition GRANTED -> ACTIVE
+        if grant.status == AccessGrantStatus.GRANTED:
+            grant.status = AccessGrantStatus.ACTIVE
+            grant.activated_at = now
+            await self.db.commit()
+
+        return question, assignment, grant
+
+    async def revoke_access_grant(
+        self,
+        grant_id: str,
+        actor: User,
+        reason: str = "Manually revoked",
+    ) -> QuestionAccessGrant:
+        """Explicitly revoke an active access grant."""
+        res = await self.db.execute(
+            select(QuestionAccessGrant).where(QuestionAccessGrant.id == grant_id)
+        )
+        grant = res.scalar_one_or_none()
+        if not grant:
+            raise ValueError("Grant not found")
+
+        if grant.reviewer_id != actor.id and actor.role not in [
+            UserRoleEnum.SUPER_ADMIN,
+            UserRoleEnum.EXAM_AUTHORITY,
+            UserRoleEnum.MODERATOR,
+        ]:
+            raise PermissionError("Not authorized to revoke this grant")
+
+        grant.status = AccessGrantStatus.REVOKED
+        grant.revoked_at = datetime.now(timezone.utc)
+        grant.revocation_reason = reason
+
+        await self.audit.log(
+            event_type="ACCESS_REVOKED",
+            result=AuditResult.SUCCESS,
+            actor_id=actor.id,
+            actor_role=actor.role.value,
+            resource_type="question_access_grant",
+            resource_id=grant.id,
+            metadata={"reason": reason, "assignment_id": grant.assignment_id},
+        )
+        await self.db.commit()
+        await self.db.refresh(grant)
+        return grant
 
     # ── QUESTION CREATION & AUTHORING ─────────────────────────────────────────
 
@@ -500,6 +1007,34 @@ class QuestionService:
             },
         )
 
+        # 5b. Cascade atomic revocation to all active/granted access grants
+        active_grants_res = await self.db.execute(
+            select(QuestionAccessGrant).where(
+                QuestionAccessGrant.assignment_id == current_assign.id,
+                QuestionAccessGrant.status.in_([
+                    AccessGrantStatus.GRANTED,
+                    AccessGrantStatus.ACTIVE,
+                ]),
+            )
+        )
+        for grant in active_grants_res.scalars():
+            grant.status = AccessGrantStatus.REVOKED
+            grant.revoked_at = datetime.now(timezone.utc)
+            grant.revocation_reason = f"Assignment reassigned: {reason}"
+            await self.audit.log(
+                event_type="ACCESS_REVOKED",
+                result=AuditResult.SUCCESS,
+                actor_id=reassigned_by.id,
+                actor_role=reassigned_by.role.value,
+                resource_type="question_access_grant",
+                resource_id=grant.id,
+                metadata={
+                    "assignment_id": current_assign.id,
+                    "question_id": question.id,
+                    "reason": reason,
+                },
+            )
+
         # 6. Create replacement assignment
         new_assignment = QuestionAssignment(
             question_id=question.id,
@@ -533,7 +1068,13 @@ class QuestionService:
 
     # ── REVIEW LIFECYCLE ──────────────────────────────────────────────────────
 
-    async def start_review(self, assignment_id: str, actor: User) -> QuestionAssignment:
+    async def start_review(
+        self,
+        assignment_id: str,
+        actor: User,
+        grant_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> QuestionAssignment:
         """Atomically transition assignment from ACTIVE to IN_REVIEW."""
         res = await self.db.execute(
             select(QuestionAssignment)
@@ -546,6 +1087,15 @@ class QuestionService:
 
         if assignment.reviewer_id != actor.id:
             raise PermissionError("Assignment does not belong to requesting user")
+
+        if grant_id:
+            await self.authorize_question_operation(
+                actor=actor,
+                question_id=assignment.question_id,
+                operation=QuestionOperation.REVIEW,
+                grant_id=grant_id,
+                session_id=session_id,
+            )
 
         if assignment.status == QuestionAssignmentStatus.IN_REVIEW:
             return assignment
@@ -563,7 +1113,7 @@ class QuestionService:
             actor_role=actor.role.value,
             resource_type="question_assignment",
             resource_id=assignment.id,
-            metadata={"question_id": assignment.question_id},
+            metadata={"question_id": assignment.question_id, "grant_id": grant_id},
         )
         await self.db.commit()
         await self.db.refresh(assignment)
@@ -575,6 +1125,8 @@ class QuestionService:
         actor: User,
         verdict: str,
         comments: Optional[str] = None,
+        grant_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> QuestionReview:
         """Submit review verdict and transition assignment to COMPLETED."""
         res = await self.db.execute(
@@ -588,6 +1140,15 @@ class QuestionService:
 
         if assignment.reviewer_id != actor.id:
             raise PermissionError("Assignment does not belong to requesting user")
+
+        if grant_id:
+            await self.authorize_question_operation(
+                actor=actor,
+                question_id=assignment.question_id,
+                operation=QuestionOperation.REVIEW,
+                grant_id=grant_id,
+                session_id=session_id,
+            )
 
         if assignment.status != QuestionAssignmentStatus.IN_REVIEW:
             raise ValueError(f"Cannot submit review: assignment must be IN_REVIEW (status: {assignment.status.value})")
@@ -604,14 +1165,26 @@ class QuestionService:
         assignment.status = QuestionAssignmentStatus.COMPLETED
         assignment.completed_at = datetime.now(timezone.utc)
 
+        # Invalidate/expire active grants for the completed assignment
+        active_grants_res = await self.db.execute(
+            select(QuestionAccessGrant).where(
+                QuestionAccessGrant.assignment_id == assignment.id,
+                QuestionAccessGrant.status.in_([AccessGrantStatus.GRANTED, AccessGrantStatus.ACTIVE]),
+            )
+        )
+        for g in active_grants_res.scalars():
+            g.status = AccessGrantStatus.EXPIRED
+            g.revoked_at = datetime.now(timezone.utc)
+            g.revocation_reason = "Assignment completed"
+
         await self.audit.log(
-            event_type="QUESTION_REVIEWED",
+            event_type="QUESTION_REVIEW_COMPLETED",
             result=AuditResult.SUCCESS,
             actor_id=actor.id,
             actor_role=actor.role.value,
             resource_type="question",
             resource_id=assignment.question_id,
-            metadata={"verdict": verdict, "assignment_id": assignment.id},
+            metadata={"verdict": verdict, "assignment_id": assignment.id, "grant_id": grant_id},
         )
         await self.db.commit()
         await self.db.refresh(review)
@@ -624,18 +1197,29 @@ class QuestionService:
         question_id: str,
         moderator: User,
         comments: str = "",
+        grant_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> Question:
         """
         Approve question and trigger immediate encryption.
-        Requires active assignment for the moderator unless explicit emergency exception.
+        Requires active assignment for the moderator and valid grant if grant_id provided.
         """
-        is_auth, question, assignment, err = await self.check_question_access(
-            moderator,
-            question_id,
-            required_permission="questions:approve",
-        )
-        if not is_auth:
-            raise PermissionError(err or "Access denied: moderator not assigned to question")
+        if grant_id:
+            question, assignment, grant = await self.authorize_question_operation(
+                actor=moderator,
+                question_id=question_id,
+                operation=QuestionOperation.APPROVE,
+                grant_id=grant_id,
+                session_id=session_id,
+            )
+        else:
+            is_auth, question, assignment, err = await self.check_question_access(
+                moderator,
+                question_id,
+                required_permission="questions:approve",
+            )
+            if not is_auth:
+                raise PermissionError(err or "Access denied: moderator not assigned to question")
 
         if question.status not in [QuestionStatus.SUBMITTED, QuestionStatus.UNDER_REVIEW]:
             raise ValueError(f"Cannot approve question in status {question.status}")
@@ -653,6 +1237,18 @@ class QuestionService:
             assignment.status = QuestionAssignmentStatus.COMPLETED
             assignment.completed_at = datetime.now(timezone.utc)
 
+            # Invalidate active grants for completed assignment
+            active_grants_res = await self.db.execute(
+                select(QuestionAccessGrant).where(
+                    QuestionAccessGrant.assignment_id == assignment.id,
+                    QuestionAccessGrant.status.in_([AccessGrantStatus.GRANTED, AccessGrantStatus.ACTIVE]),
+                )
+            )
+            for g in active_grants_res.scalars():
+                g.status = AccessGrantStatus.EXPIRED
+                g.revoked_at = datetime.now(timezone.utc)
+                g.revocation_reason = "Assignment completed"
+
         question.status = QuestionStatus.APPROVED
         question.approved_by = moderator.id
         question.approved_at = datetime.now(timezone.utc)
@@ -664,6 +1260,7 @@ class QuestionService:
             actor_role=moderator.role.value,
             resource_type="question",
             resource_id=question_id,
+            metadata={"grant_id": grant_id} if grant_id else None,
         )
 
         # Immediately encrypt after approval
@@ -676,15 +1273,26 @@ class QuestionService:
         question_id: str,
         moderator: User,
         reason: str,
+        grant_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> Question:
-        """Reject question and return to author. Requires active assignment."""
-        is_auth, question, assignment, err = await self.check_question_access(
-            moderator,
-            question_id,
-            required_permission="questions:reject",
-        )
-        if not is_auth:
-            raise PermissionError(err or "Access denied: moderator not assigned to question")
+        """Reject question and return to author. Requires active assignment and valid grant if grant_id provided."""
+        if grant_id:
+            question, assignment, grant = await self.authorize_question_operation(
+                actor=moderator,
+                question_id=question_id,
+                operation=QuestionOperation.REJECT,
+                grant_id=grant_id,
+                session_id=session_id,
+            )
+        else:
+            is_auth, question, assignment, err = await self.check_question_access(
+                moderator,
+                question_id,
+                required_permission="questions:reject",
+            )
+            if not is_auth:
+                raise PermissionError(err or "Access denied: moderator not assigned to question")
 
         review = QuestionReview(
             question_id=question_id,
@@ -699,6 +1307,18 @@ class QuestionService:
             assignment.status = QuestionAssignmentStatus.COMPLETED
             assignment.completed_at = datetime.now(timezone.utc)
 
+            # Invalidate active grants for completed assignment
+            active_grants_res = await self.db.execute(
+                select(QuestionAccessGrant).where(
+                    QuestionAccessGrant.assignment_id == assignment.id,
+                    QuestionAccessGrant.status.in_([AccessGrantStatus.GRANTED, AccessGrantStatus.ACTIVE]),
+                )
+            )
+            for g in active_grants_res.scalars():
+                g.status = AccessGrantStatus.EXPIRED
+                g.revoked_at = datetime.now(timezone.utc)
+                g.revocation_reason = "Assignment completed"
+
         question.status = QuestionStatus.REJECTED
         question.rejection_reason = reason
 
@@ -709,7 +1329,7 @@ class QuestionService:
             actor_role=moderator.role.value,
             resource_type="question",
             resource_id=question_id,
-            metadata={"reason": reason},
+            metadata={"reason": reason, "grant_id": grant_id},
         )
         await self.db.commit()
         return question
@@ -832,14 +1452,40 @@ class QuestionService:
             })
         return results
 
-    async def get_question_detail(self, actor: User, question_id: str) -> Dict[str, Any]:
+    async def get_question_detail(
+        self,
+        actor: User,
+        question_id: str,
+        grant_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Retrieve question content for review with strict IDOR defense.
         Answer keys are strictly isolated and never returned.
+        If grant_id is provided, executes Phase 3A ephemeral authorization revalidation.
         """
-        is_auth, question, assignment, err = await self.check_question_access(actor, question_id)
-        if not is_auth:
-            raise PermissionError(err or "Access denied to question")
+        grant = None
+        if grant_id:
+            question, assignment, grant = await self.authorize_question_operation(
+                actor=actor,
+                question_id=question_id,
+                operation=QuestionOperation.VIEW,
+                grant_id=grant_id,
+                session_id=session_id,
+            )
+            await self.audit.log(
+                event_type="QUESTION_VIEWED",
+                result=AuditResult.SUCCESS,
+                actor_id=actor.id,
+                actor_role=actor.role.value,
+                resource_type="question",
+                resource_id=question.id,
+                metadata={"grant_id": grant.id, "assignment_id": assignment.id},
+            )
+        else:
+            is_auth, question, assignment, err = await self.check_question_access(actor, question_id)
+            if not is_auth:
+                raise PermissionError(err or "Access denied to question")
 
         # Parse plaintext content if available
         content_dict = None
@@ -867,6 +1513,12 @@ class QuestionService:
                 "purpose": assignment.purpose.value,
                 "status": assignment.status.value,
             } if assignment else None,
+            "grant": {
+                "id": grant.id,
+                "status": grant.status.value,
+                "operation": grant.operation.value,
+                "expires_at": grant.expires_at.isoformat() if grant.expires_at else None,
+            } if grant else None,
         }
 
     async def _get_question_owned(self, question_id: str, author: User) -> Question:

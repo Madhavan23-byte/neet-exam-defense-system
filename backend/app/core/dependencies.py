@@ -54,6 +54,20 @@ async def get_current_user(
     return user
 
 
+async def get_current_session_id(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+) -> Optional[str]:
+    """
+    Extract the validated JWT session identifier (jti) from the Bearer token.
+    Returns the jti claim as the session identifier.
+    """
+    try:
+        payload = decode_token(credentials.credentials)
+        return payload.get("jti")
+    except Exception:
+        return None
+
+
 def require_permission(permission: str):
     """
     Dependency factory for permission-based authorization.

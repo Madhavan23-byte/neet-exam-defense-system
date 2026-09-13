@@ -1,12 +1,26 @@
 import json
 from typing import Any, Dict, List, Optional, Union
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 
 from app.core.database import get_db
-from app.core.dependencies import get_client_ip, get_current_user, require_permission, require_role, limiter
-from app.core.models import User, UserRoleEnum, ReviewPurpose, QuestionAssignmentStatus
+from app.core.dependencies import (
+    get_client_ip,
+    get_current_user,
+    get_current_session_id,
+    require_permission,
+    require_role,
+    limiter,
+)
+from app.core.models import (
+    AccessGrantStatus,
+    QuestionAssignmentStatus,
+    QuestionOperation,
+    ReviewPurpose,
+    User,
+    UserRoleEnum,
+)
 from app.core.config import get_settings
 from app.modules.questions.service import QuestionService
 
@@ -73,6 +87,7 @@ class CreateQuestionRequest(BaseModel):
 class ReviewRequest(BaseModel):
     verdict: str  # APPROVED, REJECTED
     comments: Optional[str] = None
+    grant_id: Optional[str] = None
 
 
 class AssignQuestionRequest(BaseModel):
@@ -96,6 +111,21 @@ class SubmitReviewRequest(BaseModel):
     assignment_id: str
     verdict: str  # APPROVED, REJECTED, NEEDS_REVISION
     comments: Optional[str] = None
+    grant_id: Optional[str] = None
+
+
+class StartReviewRequest(BaseModel):
+    grant_id: Optional[str] = None
+
+
+class RequestAccessGrantPayload(BaseModel):
+    operation: QuestionOperation = QuestionOperation.VIEW
+    purpose: Optional[ReviewPurpose] = None
+    expires_in_minutes: Optional[int] = 30
+
+
+class RevokeAccessGrantPayload(BaseModel):
+    reason: str = "Manually revoked"
 
 
 # ── ROUTES ───────────────────────────────────────────────────────────────────
@@ -174,16 +204,91 @@ async def list_questions(
 @router.get("/{question_id}")
 async def get_question_detail(
     question_id: str,
+    grant_id: Optional[str] = Query(None),
+    x_grant_id: Optional[str] = Header(None, alias="X-Access-Grant-ID"),
     current_user: User = Depends(get_current_user),
+    session_id: Optional[str] = Depends(get_current_session_id),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Direct question retrieval with strict IDOR defense.
     Reviewers can only fetch questions they are actively assigned to review.
+    If grant_id is provided, validates ephemeral authorization.
+    """
+    service = QuestionService(db)
+    effective_grant_id = grant_id or x_grant_id
+    try:
+        return await service.get_question_detail(
+            actor=current_user,
+            question_id=question_id,
+            grant_id=effective_grant_id,
+            session_id=session_id,
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@router.post("/{question_id}/access-grant")
+async def request_question_access_grant(
+    question_id: str,
+    body: RequestAccessGrantPayload,
+    current_user: User = Depends(get_current_user),
+    session_id: Optional[str] = Depends(get_current_session_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Request an ephemeral access grant for a specific operation and purpose.
+    Returns grant_id, status, and expiration.
     """
     service = QuestionService(db)
     try:
-        return await service.get_question_detail(current_user, question_id)
+        grant = await service.request_question_access(
+            actor=current_user,
+            question_id=question_id,
+            operation=body.operation,
+            purpose=body.purpose,
+            session_id=session_id,
+            expires_in_minutes=body.expires_in_minutes,
+        )
+        return {
+            "success": True,
+            "grant_id": grant.id,
+            "status": grant.status.value,
+            "operation": grant.operation.value,
+            "purpose": grant.purpose.value,
+            "issued_at": grant.issued_at.isoformat(),
+            "expires_at": grant.expires_at.isoformat() if grant.expires_at else None,
+            "correlation_id": grant.correlation_id,
+        }
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post("/grants/{grant_id}/revoke")
+async def revoke_access_grant(
+    grant_id: str,
+    body: RevokeAccessGrantPayload,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Explicitly revoke an active access grant."""
+    service = QuestionService(db)
+    try:
+        grant = await service.revoke_access_grant(
+            grant_id=grant_id,
+            actor=current_user,
+            reason=body.reason,
+        )
+        return {
+            "success": True,
+            "grant_id": grant.id,
+            "status": grant.status.value,
+            "revoked_at": grant.revoked_at.isoformat() if grant.revoked_at else None,
+        }
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except ValueError as e:
@@ -292,13 +397,23 @@ async def reassign_question(
 @router.post("/assignments/{assignment_id}/start")
 async def start_review(
     assignment_id: str,
+    body: Optional[StartReviewRequest] = None,
+    grant_id: Optional[str] = Query(None),
+    x_grant_id: Optional[str] = Header(None, alias="X-Access-Grant-ID"),
     current_user: User = Depends(get_current_user),
+    session_id: Optional[str] = Depends(get_current_session_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Reviewer starts review session (ACTIVE -> IN_REVIEW)."""
     service = QuestionService(db)
+    effective_grant_id = (body.grant_id if body else None) or grant_id or x_grant_id
     try:
-        assignment = await service.start_review(assignment_id, current_user)
+        assignment = await service.start_review(
+            assignment_id=assignment_id,
+            actor=current_user,
+            grant_id=effective_grant_id,
+            session_id=session_id,
+        )
         return {
             "success": True,
             "assignment_id": assignment.id,
@@ -315,17 +430,23 @@ async def start_review(
 async def submit_question_review(
     question_id: str,
     body: SubmitReviewRequest,
+    grant_id: Optional[str] = Query(None),
+    x_grant_id: Optional[str] = Header(None, alias="X-Access-Grant-ID"),
     current_user: User = Depends(get_current_user),
+    session_id: Optional[str] = Depends(get_current_session_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Reviewer submits review on an assigned question (IN_REVIEW -> COMPLETED)."""
     service = QuestionService(db)
+    effective_grant_id = body.grant_id or grant_id or x_grant_id
     try:
         review = await service.submit_review(
             assignment_id=body.assignment_id,
             actor=current_user,
             verdict=body.verdict,
             comments=body.comments,
+            grant_id=effective_grant_id,
+            session_id=session_id,
         )
         return {
             "success": True,
@@ -343,7 +464,10 @@ async def submit_question_review(
 async def approve_question(
     question_id: str,
     body: ReviewRequest,
+    grant_id: Optional[str] = Query(None),
+    x_grant_id: Optional[str] = Header(None, alias="X-Access-Grant-ID"),
     current_user: User = Depends(get_current_user),
+    session_id: Optional[str] = Depends(get_current_session_id),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -351,8 +475,15 @@ async def approve_question(
     Moderator must be assigned to question during normal review workflow.
     """
     service = QuestionService(db)
+    effective_grant_id = body.grant_id or grant_id or x_grant_id
     try:
-        question = await service.approve_question(question_id, current_user, body.comments or "")
+        question = await service.approve_question(
+            question_id=question_id,
+            moderator=current_user,
+            comments=body.comments or "",
+            grant_id=effective_grant_id,
+            session_id=session_id,
+        )
         return {
             "id": question.id,
             "status": question.status.value,
@@ -370,17 +501,28 @@ async def approve_question(
 async def reject_question(
     question_id: str,
     body: ReviewRequest,
+    grant_id: Optional[str] = Query(None),
+    x_grant_id: Optional[str] = Header(None, alias="X-Access-Grant-ID"),
     current_user: User = Depends(get_current_user),
+    session_id: Optional[str] = Depends(get_current_session_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Reject a question. Moderator must be assigned to question during normal review workflow."""
     if not body.comments:
         raise HTTPException(status_code=400, detail="Rejection reason is required")
     service = QuestionService(db)
+    effective_grant_id = body.grant_id or grant_id or x_grant_id
     try:
-        question = await service.reject_question(question_id, current_user, body.comments)
+        question = await service.reject_question(
+            question_id=question_id,
+            moderator=current_user,
+            reason=body.comments,
+            grant_id=effective_grant_id,
+            session_id=session_id,
+        )
         return {"id": question.id, "status": question.status.value}
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+

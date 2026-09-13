@@ -21,6 +21,7 @@ export default function ReviewerPage() {
   const queryClient = useQueryClient();
   const { user, logout } = useAuthStore();
   const [selectedAssignment, setSelectedAssignment] = useState<any>(null);
+  const [activeGrant, setActiveGrant] = useState<any>(null);
   const [reviewVerdict, setReviewVerdict] = useState<'APPROVED' | 'REJECTED' | 'NEEDS_REVISION'>('APPROVED');
   const [reviewComments, setReviewComments] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
@@ -39,15 +40,48 @@ export default function ReviewerPage() {
   const {
     data: questionDetail,
     isLoading: isQuestionLoading,
+    error: questionError,
   } = useQuery({
-    queryKey: ['questionDetail', selectedAssignment?.question_id],
-    queryFn: () => questionsApi.getDetail(selectedAssignment.question_id).then((r) => r.data),
+    queryKey: ['questionDetail', selectedAssignment?.question_id, activeGrant?.grant_id],
+    queryFn: () => questionsApi.getDetail(selectedAssignment.question_id, activeGrant?.grant_id).then((r) => r.data),
     enabled: !!selectedAssignment,
+    retry: false,
+  });
+
+  // Mutation to request an ephemeral access grant (Phase 3A)
+  const acquireGrantMutation = useMutation({
+    mutationFn: async ({ questionId, operation = 'VIEW', purpose }: { questionId: string; operation?: string; purpose?: string }) => {
+      const res = await questionsApi.requestAccessGrant(questionId, operation, purpose);
+      return res.data;
+    },
+    onSuccess: (data) => {
+      setActiveGrant(data);
+      setActionError(null);
+      queryClient.invalidateQueries({ queryKey: ['questionDetail', selectedAssignment?.question_id] });
+    },
+    onError: (err: any) => {
+      setActionError(err?.response?.data?.detail || 'Failed to acquire ephemeral access grant.');
+    },
+  });
+
+  // Mutation to revoke access grant
+  const revokeGrantMutation = useMutation({
+    mutationFn: async (grantId: string) => {
+      const res = await questionsApi.revokeAccessGrant(grantId, 'Explicit reviewer release');
+      return res.data;
+    },
+    onSuccess: () => {
+      setActiveGrant(null);
+      setActionError(null);
+    },
+    onError: (err: any) => {
+      setActionError(err?.response?.data?.detail || 'Failed to revoke grant.');
+    },
   });
 
   // Mutation to start review (ACTIVE -> IN_REVIEW)
   const startReviewMutation = useMutation({
-    mutationFn: (assignmentId: string) => questionsApi.startReview(assignmentId),
+    mutationFn: (assignmentId: string) => questionsApi.startReview(assignmentId, activeGrant?.grant_id),
     onSuccess: (res) => {
       setActionError(null);
       queryClient.invalidateQueries({ queryKey: ['myAssignments'] });
@@ -68,12 +102,14 @@ export default function ReviewerPage() {
         selectedAssignment.question_id,
         selectedAssignment.assignment_id,
         reviewVerdict,
-        reviewComments
+        reviewComments,
+        activeGrant?.grant_id
       );
     },
     onSuccess: () => {
       setActionError(null);
       setReviewComments('');
+      setActiveGrant(null);
       queryClient.invalidateQueries({ queryKey: ['myAssignments'] });
       setSelectedAssignment(null);
     },
@@ -192,6 +228,7 @@ export default function ReviewerPage() {
                       key={item.assignment_id}
                       onClick={() => {
                         setSelectedAssignment(item);
+                        setActiveGrant(null);
                         setActionError(null);
                       }}
                       className={`w-full text-left p-3.5 rounded-lg border transition-all duration-150 flex items-center justify-between ${
@@ -267,6 +304,63 @@ export default function ReviewerPage() {
                 </div>
               </div>
 
+              {/* Ephemeral Access Grant Status Bar (Phase 3A) */}
+              <div className="p-3.5 rounded-lg bg-slate-900/90 border border-slate-800 flex items-center justify-between text-xs">
+                <div className="flex items-center gap-3">
+                  <div className={`w-2.5 h-2.5 rounded-full ${activeGrant ? 'bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.6)]' : 'bg-slate-600'}`} />
+                  <div>
+                    <div className="font-semibold text-white flex items-center gap-2">
+                      <span>Ephemeral Access Grant</span>
+                      {activeGrant ? (
+                        <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                          {activeGrant.status || 'ACTIVE'} ({activeGrant.operation})
+                        </span>
+                      ) : (
+                        <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-slate-800 text-slate-400">
+                          INACTIVE
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-slate-400 font-mono">
+                      {activeGrant ? (
+                        <span>ID: {activeGrant.grant_id.slice(0, 8)}...{activeGrant.grant_id.slice(-6)} • Expires: {activeGrant.expires_at ? new Date(activeGrant.expires_at).toLocaleTimeString() : 'Session'}</span>
+                      ) : (
+                        <span>Dynamic ephemeral grant required for high-assurance review operations</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {activeGrant ? (
+                    <button
+                      type="button"
+                      onClick={() => revokeGrantMutation.mutate(activeGrant.grant_id)}
+                      disabled={revokeGrantMutation.isPending}
+                      className="px-2.5 py-1 rounded bg-red-950/40 hover:bg-red-900/60 border border-red-800/50 text-[11px] font-semibold text-red-300 transition-colors"
+                    >
+                      {revokeGrantMutation.isPending ? 'Revoking...' : 'Revoke Grant'}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        acquireGrantMutation.mutate({
+                          questionId: selectedAssignment.question_id,
+                          operation: selectedAssignment.assignment_status === 'ACTIVE' ? 'VIEW' : 'REVIEW',
+                          purpose: selectedAssignment.purpose,
+                        })
+                      }
+                      disabled={acquireGrantMutation.isPending}
+                      className="px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-500 text-[11px] font-semibold text-white transition-colors flex items-center gap-1"
+                    >
+                      <Shield className="w-3.5 h-3.5" />
+                      {acquireGrantMutation.isPending ? 'Requesting...' : 'Request Grant'}
+                    </button>
+                  )}
+                </div>
+              </div>
+
               {/* Question Content Display */}
               {isQuestionLoading ? (
                 <div className="py-12 text-center text-slate-400 text-xs flex flex-col items-center gap-2">
@@ -315,7 +409,9 @@ export default function ReviewerPage() {
                   </div>
                 </div>
               ) : (
-                <div className="text-xs text-red-400">Failed to load question detail.</div>
+                <div className="p-3 rounded bg-red-950/30 border border-red-900/40 text-xs text-red-300">
+                  {(questionError as any)?.response?.data?.detail || 'Failed to load question detail.'}
+                </div>
               )}
 
               {/* Action Area based on Assignment Status */}

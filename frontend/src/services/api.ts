@@ -57,18 +57,44 @@ export const examsApi = {
 // ── Questions ─────────────────────────────────────────────────────────────────
 export const questionsApi = {
   list: (examId: string) => api.get(`/questions/exam/${examId}`),
-  getDetail: (id: string) => api.get(`/questions/${id}`),
+  getDetail: (id: string, grantId?: string) =>
+    api.get(`/questions/${id}${grantId ? `?grant_id=${encodeURIComponent(grantId)}` : ''}`, {
+      headers: grantId ? { 'X-Access-Grant-ID': grantId } : {},
+    }),
+  requestAccessGrant: (questionId: string, operation: string = 'VIEW', purpose?: string, expiresInMinutes: number = 30) =>
+    api.post(`/questions/${questionId}/access-grant`, {
+      operation,
+      purpose,
+      expires_in_minutes: expiresInMinutes,
+    }),
+  revokeAccessGrant: (grantId: string, reason?: string) =>
+    api.post(`/questions/grants/${grantId}/revoke`, { reason: reason || 'User action' }),
   getMyAssignments: (examId?: string) =>
     api.get('/questions/assignments/me' + (examId ? `?exam_id=${encodeURIComponent(examId)}` : '')),
   create: (data: any) => api.post('/questions/', data),
   submit: (id: string) => api.post(`/questions/${id}/submit`),
-  startReview: (assignmentId: string) => api.post(`/questions/assignments/${assignmentId}/start`),
-  submitReview: (questionId: string, assignmentId: string, verdict: string, comments?: string) =>
-    api.post(`/questions/${questionId}/review`, { assignment_id: assignmentId, verdict, comments }),
-  approve: (id: string, comments: string) =>
-    api.post(`/questions/${id}/approve`, { verdict: 'APPROVED', comments }),
-  reject: (id: string, comments: string) =>
-    api.post(`/questions/${id}/reject`, { verdict: 'REJECTED', comments }),
+  startReview: (assignmentId: string, grantId?: string) =>
+    api.post(`/questions/assignments/${assignmentId}/start`, { grant_id: grantId }, {
+      headers: grantId ? { 'X-Access-Grant-ID': grantId } : {},
+    }),
+  submitReview: (questionId: string, assignmentId: string, verdict: string, comments?: string, grantId?: string) =>
+    api.post(
+      `/questions/${questionId}/review`,
+      { assignment_id: assignmentId, verdict, comments, grant_id: grantId },
+      { headers: grantId ? { 'X-Access-Grant-ID': grantId } : {} }
+    ),
+  approve: (id: string, comments: string, grantId?: string) =>
+    api.post(
+      `/questions/${id}/approve`,
+      { verdict: 'APPROVED', comments, grant_id: grantId },
+      { headers: grantId ? { 'X-Access-Grant-ID': grantId } : {} }
+    ),
+  reject: (id: string, comments: string, grantId?: string) =>
+    api.post(
+      `/questions/${id}/reject`,
+      { verdict: 'REJECTED', comments, grant_id: grantId },
+      { headers: grantId ? { 'X-Access-Grant-ID': grantId } : {} }
+    ),
   shard: (examId: string, data: any) => api.post(`/questions/exam/${examId}/shard`, data),
   assign: (questionId: string, data: any) => api.post(`/questions/${questionId}/assign`, data),
   reassign: (assignmentId: string, data: any) =>
