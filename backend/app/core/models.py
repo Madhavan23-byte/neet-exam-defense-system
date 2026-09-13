@@ -97,6 +97,28 @@ class AccessGrantStatus(str, PyEnum):
     REVOKED = "REVOKED"
 
 
+# ── Break-Glass & Controlled Complete-Paper Exception (Phase 3B) ─────────────
+
+class BreakGlassScope(str, PyEnum):
+    COMPLETE_EXAM_PAPER = "COMPLETE_EXAM_PAPER"
+    EXAM_FORM_PREVIEW = "EXAM_FORM_PREVIEW"
+    AUDIT_VERIFICATION = "AUDIT_VERIFICATION"
+
+
+class BreakGlassRequestStatus(str, PyEnum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    ACTIVATED = "ACTIVATED"
+    EXPIRED = "EXPIRED"
+    REVOKED = "REVOKED"
+
+
+class BreakGlassApprovalDecision(str, PyEnum):
+    APPROVE = "APPROVE"
+    REJECT = "REJECT"
+
+
 class ExamStatus(str, PyEnum):
     DRAFT = "DRAFT"
     BLUEPRINT_CREATED = "BLUEPRINT_CREATED"
@@ -704,4 +726,87 @@ class Result(Base):
 
     __table_args__ = (
         Index("ix_result_candidate_exam", "candidate_id", "exam_id"),
+    )
+
+
+# ── Break-Glass Models (Phase 3B) ─────────────────────────────────────────────
+
+class BreakGlassRequest(Base):
+    """
+    Emergency break-glass authorization request for controlled complete-paper exception.
+    Enforces multi-party quorum with role diversity, canonical parameter fingerprinting,
+    and fresh-session JWT JTI binding upon activation.
+    """
+    __tablename__ = "break_glass_requests"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    exam_id: Mapped[str] = mapped_column(ForeignKey("exams.id", ondelete="CASCADE"), nullable=False)
+    blueprint_id: Mapped[Optional[str]] = mapped_column(ForeignKey("exam_blueprints.id"), nullable=True)
+    exam_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    blueprint_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    requester_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    scope: Mapped[BreakGlassScope] = mapped_column(Enum(BreakGlassScope), nullable=False)
+    form_label: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    justification: Mapped[str] = mapped_column(Text, nullable=False)
+    incident_id: Mapped[Optional[str]] = mapped_column(ForeignKey("incidents.id"), nullable=True)
+    required_quorum: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    min_distinct_roles: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    status: Mapped[BreakGlassRequestStatus] = mapped_column(
+        Enum(BreakGlassRequestStatus), default=BreakGlassRequestStatus.PENDING, nullable=False
+    )
+    requested_duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    activation_session_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    content_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(20), default="1.0", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_by: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"), nullable=True)
+    revocation_reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    correlation_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    exam: Mapped["Exam"] = relationship("Exam")
+    blueprint: Mapped[Optional["ExamBlueprint"]] = relationship("ExamBlueprint")
+    requester: Mapped["User"] = relationship("User", foreign_keys=[requester_id])
+    revoker: Mapped[Optional["User"]] = relationship("User", foreign_keys=[revoked_by])
+    incident: Mapped[Optional["Incident"]] = relationship("Incident")
+    approvals: Mapped[List["BreakGlassApproval"]] = relationship(
+        "BreakGlassApproval", back_populates="request", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        Index("ix_bg_request_exam_status", "exam_id", "status"),
+        Index("ix_bg_request_requester_status", "requester_id", "status"),
+        Index("ix_bg_request_created_at", "created_at"),
+    )
+
+
+class BreakGlassApproval(Base):
+    """
+    Individual cryptographic approval record for a break-glass request.
+    Unique constraint ensures one vote per approver; role diversity is enforced transactionally.
+    """
+    __tablename__ = "break_glass_approvals"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    request_id: Mapped[str] = mapped_column(ForeignKey("break_glass_requests.id", ondelete="CASCADE"), nullable=False)
+    approver_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    approver_role: Mapped[UserRoleEnum] = mapped_column(Enum(UserRoleEnum), nullable=False)
+    decision: Mapped[BreakGlassApprovalDecision] = mapped_column(Enum(BreakGlassApprovalDecision), nullable=False)
+    comments: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    nonce: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    digital_signature: Mapped[str] = mapped_column(Text, nullable=False)
+    is_valid: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+    request: Mapped["BreakGlassRequest"] = relationship("BreakGlassRequest", back_populates="approvals")
+    approver: Mapped["User"] = relationship("User", foreign_keys=[approver_id])
+
+    __table_args__ = (
+        UniqueConstraint("request_id", "approver_id", name="uq_bg_approval_request_approver"),
+        Index("ix_bg_approval_request_valid", "request_id", "is_valid"),
+        Index("ix_bg_approval_approver_id", "approver_id"),
     )

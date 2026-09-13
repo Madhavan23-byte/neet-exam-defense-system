@@ -309,3 +309,43 @@ async def generate_forms(
             "No plaintext exam paper exists at this stage."
         ),
     }
+
+
+class CancelExamRequest(BaseModel):
+    reason: str
+
+
+@router.post("/{exam_id}/cancel", dependencies=[Depends(require_permission("exams:manage"))])
+async def cancel_exam(
+    exam_id: str,
+    body: CancelExamRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel an exam and execute the application-level transactional security cascade."""
+    result = await db.execute(select(Exam).where(Exam.id == exam_id).with_for_update())
+    exam = result.scalar_one_or_none()
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found")
+
+    exam.status = ExamStatus.CANCELLED
+
+    from app.modules.break_glass.service import BreakGlassService
+    bg_service = BreakGlassService(db)
+    revoked_count = await bg_service.cascade_exam_freeze(exam_id, current_user, body.reason)
+
+    audit = AuditService(db)
+    await audit.log(
+        event_type="EXAM_CANCELLED",
+        actor_id=current_user.id,
+        actor_role=current_user.role.value,
+        resource_type="exam",
+        resource_id=exam.id,
+        metadata={"reason": body.reason, "revoked_break_glass_requests": revoked_count},
+    )
+
+    return {
+        "success": True,
+        "message": f"Exam cancelled. Reason: {body.reason}",
+        "revoked_break_glass_requests": revoked_count,
+    }

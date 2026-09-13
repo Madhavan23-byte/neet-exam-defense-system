@@ -39,9 +39,14 @@ def client():
 
 @pytest.fixture(scope="module")
 def released_exam_id(client):
-    """Retrieve the released exam ID."""
+    """Retrieve the released exam ID that has generated exam forms."""
     async def _get(conn):
-        return await conn.fetchval("SELECT id FROM exams WHERE status = 'RELEASED' LIMIT 1")
+        eid = await conn.fetchval(
+            "SELECT e.id FROM exams e JOIN exam_forms f ON e.id = f.exam_id WHERE e.status = 'RELEASED' LIMIT 1"
+        )
+        if not eid:
+            eid = await conn.fetchval("SELECT id FROM exams WHERE status = 'RELEASED' LIMIT 1")
+        return eid
     exam_id = run_pg_query(_get)
     assert exam_id is not None, "No released exam found in PostgreSQL"
     return exam_id

@@ -47,6 +47,9 @@ def released_exam_id(client, admin_token):
     assert res.status_code == 200
     exams = res.json()
     for exam in exams:
+        if exam.get("title") == "B-SEA Global Security Certification 2026" and exam.get("status") == "RELEASED":
+            return exam["id"]
+    for exam in exams:
         if exam.get("status") == "RELEASED":
             return exam["id"]
     return exams[0]["id"]

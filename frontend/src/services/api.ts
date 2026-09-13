@@ -165,3 +165,128 @@ export const usersApi = {
   lock: (id: string) => api.post(`/users/${id}/lock`),
   unlock: (id: string) => api.post(`/users/${id}/unlock`),
 };
+
+// ── Break-Glass & Complete-Paper Exception ────────────────────────────────────
+export type BreakGlassScope = 'COMPLETE_EXAM_PAPER' | 'EXAM_FORM_PREVIEW';
+export type BreakGlassRequestStatus =
+  | 'PENDING'
+  | 'APPROVED'
+  | 'ACTIVATED'
+  | 'EXPIRED'
+  | 'REVOKED'
+  | 'REJECTED';
+export type BreakGlassApprovalDecision = 'APPROVE' | 'REJECT';
+
+export interface BreakGlassApproval {
+  id: string;
+  request_id: string;
+  approver_id: string;
+  approver_role: string;
+  decision: BreakGlassApprovalDecision;
+  comments?: string;
+  nonce: string;
+  request_fingerprint: string;
+  digital_signature: string;
+  is_valid: boolean;
+  created_at: string;
+}
+
+export interface BreakGlassRequest {
+  id: string;
+  exam_id: string;
+  blueprint_id?: string;
+  exam_version: number;
+  blueprint_hash: string;
+  requester_id: string;
+  scope: BreakGlassScope;
+  form_label?: string;
+  justification: string;
+  incident_id?: string;
+  required_quorum: number;
+  min_distinct_roles: number;
+  status: BreakGlassRequestStatus;
+  requested_duration_minutes: number;
+  activation_session_id?: string;
+  content_fingerprint: string;
+  policy_version: string;
+  created_at: string;
+  approved_at?: string;
+  activated_at?: string;
+  expires_at?: string;
+  revoked_at?: string;
+  revoked_by?: string;
+  revocation_reason?: string;
+  correlation_id: string;
+  approvals_count: number;
+  distinct_roles_count: number;
+  approvals: BreakGlassApproval[];
+}
+
+export interface AssembledQuestion {
+  id: string;
+  subject: string;
+  section?: string;
+  difficulty: string;
+  content: string;
+  options: string[];
+  marks: number;
+}
+
+export interface AttributionWatermark {
+  requester_username: string;
+  requester_user_id: string;
+  request_id: string;
+  activation_session_id: string;
+  assembled_at_utc: string;
+  expires_at_utc: string;
+  audit_ip_hash?: string;
+  security_notice: string;
+}
+
+export interface AssembledPaperResponse {
+  exam_id: string;
+  exam_title: string;
+  scope: string;
+  form_label?: string;
+  question_count: number;
+  questions: AssembledQuestion[];
+  attribution_watermark: AttributionWatermark;
+  security_invariant: string;
+}
+
+export const breakGlassApi = {
+  createRequest: (data: {
+    exam_id: string;
+    scope: BreakGlassScope;
+    justification: string;
+    form_label?: string;
+    incident_id?: string;
+    requested_duration_minutes?: number;
+  }) => api.post<BreakGlassRequest>('/break-glass/requests', data),
+
+  listRequests: (examId?: string, statusFilter?: BreakGlassRequestStatus) => {
+    const params = new URLSearchParams();
+    if (examId) params.append('exam_id', examId);
+    if (statusFilter) params.append('status_filter', statusFilter);
+    const qs = params.toString();
+    return api.get<BreakGlassRequest[]>(`/break-glass/requests${qs ? `?${qs}` : ''}`);
+  },
+
+  getRequest: (id: string) =>
+    api.get<BreakGlassRequest>(`/break-glass/requests/${id}`),
+
+  approveRequest: (id: string, comments?: string) =>
+    api.post<BreakGlassApproval>(`/break-glass/requests/${id}/approve`, { comments }),
+
+  rejectRequest: (id: string, comments?: string) =>
+    api.post<BreakGlassApproval>(`/break-glass/requests/${id}/reject`, { comments }),
+
+  activateRequest: (id: string) =>
+    api.post<BreakGlassRequest>(`/break-glass/requests/${id}/activate`),
+
+  getAssembledPaper: (id: string) =>
+    api.get<AssembledPaperResponse>(`/break-glass/requests/${id}/assembled-paper`),
+
+  revokeRequest: (id: string, reason: string) =>
+    api.post<BreakGlassRequest>(`/break-glass/requests/${id}/revoke`, { reason }),
+};

@@ -1,7 +1,7 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import {
   Shield, LayoutDashboard, FileText, Users, Lock,
-  AlertTriangle, BookOpen, LogOut, Key, BookCheck, Activity
+  AlertTriangle, BookOpen, LogOut, Key, BookCheck, Activity, Flame
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 
@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { to: '/admin/exams', icon: <FileText className="w-4 h-4" />, label: 'Exams' },
   { to: '/admin/authoring', icon: <BookOpen className="w-4 h-4" />, label: 'Authoring' },
   { to: '/admin/release', icon: <Key className="w-4 h-4" />, label: 'Release Control' },
+  { to: '/admin/break-glass', icon: <Flame className="w-4 h-4 text-amber-400" />, label: 'Break-Glass Ops' },
   { to: '/admin/users', icon: <Users className="w-4 h-4" />, label: 'Users' },
   { to: '/admin/security', icon: <Activity className="w-4 h-4" />, label: 'Security Console' },
   { to: '/admin/audit', icon: <BookCheck className="w-4 h-4" />, label: 'Audit Trail' },

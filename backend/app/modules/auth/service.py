@@ -254,6 +254,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "orgs:manage", "exams:manage", "questions:manage",
         "audit:read", "security:manage", "incidents:manage",
         "release:approve", "candidates:manage", "system:admin",
+        "break_glass:request", "break_glass:view", "break_glass:approve", "break_glass:revoke",
     },
     UserRoleEnum.EXAM_AUTHORITY.value: {
         "exams:create", "exams:read", "exams:update",
@@ -262,6 +263,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "candidates:read", "candidates:manage",
         "release:approve", "centres:read",
         "questions:read_metadata",
+        "break_glass:request", "break_glass:view", "break_glass:approve", "break_glass:revoke",
     },
     UserRoleEnum.QUESTION_SETTER.value: {
         "questions:create", "questions:read_own", "questions:update_own",
@@ -280,10 +282,12 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "audit:read", "sessions:revoke",
         "release:freeze", "forms:revoke",
         "users:lock",
+        "break_glass:request", "break_glass:view", "break_glass:approve", "break_glass:revoke",
     },
     UserRoleEnum.RELEASE_AUTHORITY.value: {
         "release:approve", "release:read",
         "exams:read",
+        "break_glass:approve", "break_glass:view",
     },
     UserRoleEnum.CENTRE_ADMIN.value: {
         "centres:manage_own", "candidates:read_own_centre",
@@ -298,6 +302,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
     UserRoleEnum.AUDITOR.value: {
         "audit:read", "security:read", "exams:read",
         "questions:read_metadata",
+        "break_glass:view",
     },
 }
 

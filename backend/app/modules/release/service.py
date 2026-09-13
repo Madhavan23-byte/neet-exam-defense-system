@@ -308,6 +308,11 @@ class ReleaseService:
         exam.release_frozen = True
         exam.status = ExamStatus.FROZEN
 
+        # Application-level transactional cascade: revoke any active/approved/pending break-glass requests
+        from app.modules.break_glass.service import BreakGlassService
+        bg_service = BreakGlassService(self.db)
+        revoked_count = await bg_service.cascade_exam_freeze(exam_id, officer, reason)
+
         await self.audit.log(
             event_type="RELEASE_FROZEN",
             result=AuditResult.SUCCESS,
@@ -316,12 +321,13 @@ class ReleaseService:
             resource_type="exam",
             resource_id=exam_id,
             risk_score=0.8,
-            metadata={"reason": reason},
+            metadata={"reason": reason, "revoked_break_glass_requests": revoked_count},
         )
 
         return {
             "success": True,
             "message": f"Exam release frozen. Reason: {reason}",
+            "revoked_break_glass_requests": revoked_count,
         }
 
     async def _evaluate_release_conditions(self, exam: Exam) -> dict:

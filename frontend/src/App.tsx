@@ -15,6 +15,7 @@ import SecurityConsolePage from './pages/admin/SecurityConsolePage';
 import AuditPage from './pages/admin/AuditPage';
 import IncidentsPage from './pages/admin/IncidentsPage';
 import ReleasePage from './pages/admin/ReleasePage';
+import BreakGlassCenter from './pages/admin/BreakGlassCenter';
 
 // Authoring
 import AuthoringPage from './pages/authoring/AuthoringPage';
@@ -56,6 +57,7 @@ export default function App() {
         <Route path="security" element={<SecurityConsolePage />} />
         <Route path="audit" element={<AuditPage />} />
         <Route path="incidents" element={<IncidentsPage />} />
+        <Route path="break-glass" element={<BreakGlassCenter />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />
