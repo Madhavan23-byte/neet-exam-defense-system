@@ -24,3 +24,13 @@ variable "jwt_secret_arn" {
   type        = string
   description = "ARN of the Secrets Manager secret for JWT secret key"
 }
+
+variable "kms_encryption_key_arn" {
+  type        = string
+  description = "ARN of the AWS KMS symmetric key for envelope encryption"
+}
+
+variable "kms_signing_key_arn" {
+  type        = string
+  description = "ARN of the AWS KMS asymmetric Ed25519 key for signing"
+}

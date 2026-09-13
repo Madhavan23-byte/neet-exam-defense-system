@@ -4,7 +4,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.80"
+      version = ">= 5.80, < 7.0.0"
     }
   }
 }
@@ -136,4 +136,49 @@ resource "aws_iam_policy" "rds_proxy_secrets" {
 resource "aws_iam_role_policy_attachment" "rds_proxy_secrets" {
   role       = aws_iam_role.rds_proxy.name
   policy_arn = aws_iam_policy.rds_proxy_secrets.arn
+}
+
+# ── 4. ECS Task Role KMS Runtime Cryptographic Policy ─────────────────────────
+# Least-privilege runtime policy granting ONLY actions used by the application:
+# - Symmetric: GenerateDataKey and Decrypt (for envelope encryption)
+# - Asymmetric: Sign and GetPublicKey (for Ed25519 signing and offline verification)
+# Zero KMS administration, rotation, or deletion capabilities are granted.
+resource "aws_iam_policy" "ecs_kms_crypto" {
+  name        = "${var.project_name}-ecs-kms-crypto-policy-${var.environment}"
+  description = "Runtime KMS cryptographic operations for B-SEA ECS task (encryption, decryption, signing, public-key retrieval)"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "SymmetricEnvelopeCrypto"
+        Effect = "Allow"
+        Action = [
+          "kms:GenerateDataKey",
+          "kms:Decrypt",
+          "kms:DescribeKey"
+        ]
+        Resource = [
+          var.kms_encryption_key_arn
+        ]
+      },
+      {
+        Sid    = "AsymmetricEd25519SigningAndVerification"
+        Effect = "Allow"
+        Action = [
+          "kms:Sign",
+          "kms:GetPublicKey",
+          "kms:DescribeKey"
+        ]
+        Resource = [
+          var.kms_signing_key_arn
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ecs_kms_crypto" {
+  role       = aws_iam_role.ecs_task.name
+  policy_arn = aws_iam_policy.ecs_kms_crypto.arn
 }

@@ -124,3 +124,21 @@ variable "jwt_secret_arn" {
   type        = string
   description = "Secrets Manager secret ARN for JWT secret key"
 }
+
+variable "kms_provider" {
+  type        = string
+  description = "KMS provider implementation ('aws' for production/staging, 'mock' for local tests)"
+  default     = "aws"
+}
+
+variable "kms_encryption_key_arn" {
+  type        = string
+  description = "ARN of the AWS KMS symmetric key for envelope encryption"
+  default     = ""
+}
+
+variable "kms_signing_key_arn" {
+  type        = string
+  description = "ARN of the AWS KMS asymmetric Ed25519 key for digital signatures"
+  default     = ""
+}

@@ -42,3 +42,24 @@ output "rds_proxy_endpoint" {
   value       = module.rds_proxy.proxy_endpoint
   description = "The connection endpoint for the AWS RDS Proxy (used by backend tasks)"
 }
+
+# ── KMS Cryptographic Outputs ─────────────────────────────────────────────────
+output "kms_symmetric_key_arn" {
+  value       = module.kms.symmetric_key_arn
+  description = "ARN of the AWS KMS symmetric key used for AES-256 envelope encryption"
+}
+
+output "kms_symmetric_alias" {
+  value       = module.kms.symmetric_alias_arn
+  description = "ARN of the alias for the AWS KMS symmetric encryption key"
+}
+
+output "kms_signing_key_arn" {
+  value       = module.kms.asymmetric_signing_key_arn
+  description = "ARN of the AWS KMS asymmetric Ed25519 key used for digital signing"
+}
+
+output "kms_signing_alias" {
+  value       = module.kms.asymmetric_signing_alias_arn
+  description = "ARN of the alias for the AWS KMS asymmetric Ed25519 signing key"
+}

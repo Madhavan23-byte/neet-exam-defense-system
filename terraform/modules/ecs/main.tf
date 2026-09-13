@@ -4,7 +4,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.80"
+      version = ">= 5.80, < 7.0.0"
     }
   }
 }
@@ -73,10 +73,10 @@ resource "aws_ecs_task_definition" "backend" {
         { name = "PORT", value = "8000" },
         { name = "GUNICORN_WORKERS", value = "2" },
         { name = "ENVIRONMENT", value = var.environment },
-        # MANDATORY CRYPTOGRAPHIC BOUNDARY:
-        # MockKMS remains the cryptographic engine in Phase 3C-1/2.
-        # Native AWS KMS Ed25519 signing will be integrated in Phase 3C-3.
-        { name = "MOCK_KMS", value = "true" },
+        { name = "KMS_PROVIDER", value = var.kms_provider },
+        { name = "AWS_REGION", value = var.aws_region },
+        { name = "KMS_ENCRYPTION_KEY_ID", value = var.kms_encryption_key_arn },
+        { name = "KMS_SIGNING_KEY_ID", value = var.kms_signing_key_arn },
         { name = "DATABASE_URL", value = "postgresql+asyncpg://${var.db_username}@${var.rds_proxy_endpoint}:5432/${var.db_name}?ssl=require" },
         { name = "REDIS_HOST", value = var.redis_endpoint },
         { name = "REDIS_PORT", value = tostring(var.redis_port) },

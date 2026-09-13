@@ -105,3 +105,10 @@ variable "custom_api_domain" {
   description = "Custom API domain (e.g. api-staging.bsea.gov.in) matching ACM certificate on ALB (Option A). If empty, falls back to ALB DNS name with runtime status CLOUDFRONT_TO_ALB_HTTPS_RUNTIME_VALIDATION_PENDING (Option B)."
   default     = ""
 }
+
+# ── Cryptographic Provider (KMS) ─────────────────────────────────────────────
+variable "kms_provider" {
+  type        = string
+  description = "Cryptographic provider for backend workloads ('aws' for cloud staging/production, 'mock' for local development)"
+  default     = "aws"
+}

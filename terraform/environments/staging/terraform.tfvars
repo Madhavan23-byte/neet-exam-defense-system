@@ -37,3 +37,6 @@ acm_certificate_arn = ""
 # When empty (""), CloudFront falls back to ALB DNS name with runtime status:
 # CLOUDFRONT_TO_ALB_HTTPS_RUNTIME_VALIDATION_PENDING (Option B).
 custom_api_domain = ""
+
+# Cryptographic provider for staging ECS Fargate workload
+kms_provider = "aws"

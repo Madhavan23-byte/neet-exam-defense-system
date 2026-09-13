@@ -78,13 +78,23 @@ async def readiness_probe():
     try:
         kms = get_kms()
         if kms is not None:
-            checks["crypto"] = "ok (MockKMS)"
+            p_name = getattr(kms, "provider_name", "MockKMS")
+            if p_name == "AWS-KMS":
+                # Verify AWS-KMS readiness safely without exposing sensitive AWS details
+                if hasattr(kms, "readiness_check") and not kms.readiness_check():
+                    checks["crypto"] = "degraded (AWS-KMS)"
+                    healthy = False
+                else:
+                    checks["crypto"] = "ok (AWS-KMS)"
+            else:
+                checks["crypto"] = "ok (MockKMS)"
         else:
             checks["crypto"] = "error: provider uninitialized"
             healthy = False
     except Exception as e:
         logger.warning("Readiness probe: crypto check failed: %s", e)
-        checks["crypto"] = f"error: {str(e)}"
+        # Never expose KMS identifiers or sensitive AWS errors publicly
+        checks["crypto"] = "error: cryptographic provider unavailable"
         healthy = False
 
     status_code = status.HTTP_200_OK if healthy else status.HTTP_503_SERVICE_UNAVAILABLE

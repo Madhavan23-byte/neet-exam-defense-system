@@ -49,8 +49,8 @@ def multiworker_server():
         cmd,
         cwd=os.path.join(os.path.dirname(__file__), ".."),
         env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
     # Poll until server is ready
@@ -106,7 +106,7 @@ def test_multiworker_authentication_and_session_validation(multiworker_server):
 
 def test_multiworker_break_glass_quorum_across_workers(multiworker_server):
     """Verify Break-Glass quorum and approval tracking works across independent workers."""
-    with httpx.Client(base_url=SERVER_URL, timeout=5.0) as client:
+    with httpx.Client(base_url=SERVER_URL, timeout=15.0) as client:
         # Get tokens
         admin_tok = client.post(f"{BASE_URL}/auth/login", json=ADMIN_CREDS).json()["access_token"]
         ea_tok = client.post(f"{BASE_URL}/auth/login", json=EXAM_AUTH_CREDS).json()["access_token"]

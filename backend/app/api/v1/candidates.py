@@ -203,6 +203,7 @@ async def candidate_login(
     kms = get_kms()
     session_key = kms.derive_session_key(session_token[:16], body.exam_id)
     session_key_encrypted = kms.encrypt_with_session_key(session_key, session_key)  # Protect session key
+    del session_key  # Plaintext session key immediately dereferenced
 
     candidate_id = candidate.id
     session = CandidateSession(

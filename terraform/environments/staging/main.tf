@@ -27,15 +27,26 @@ module "secrets" {
   recovery_window_in_days = 0 # Immediate deletion for staging teardown
 }
 
-# ── 4. IAM Roles & Least-Privilege Policies ───────────────────────────────────
+# ── 4. AWS KMS Customer Managed Keys (Phase 3C-3 Cryptographic Engine) ───────
+module "kms" {
+  source = "../../modules/kms"
+
+  project_name      = var.project_name
+  environment       = var.environment
+  ecs_task_role_arn = module.iam.ecs_task_role_arn
+}
+
+# ── 5. IAM Roles & Least-Privilege Policies ───────────────────────────────────
 module "iam" {
   source = "../../modules/iam"
 
-  project_name     = var.project_name
-  environment      = var.environment
-  db_secret_arn    = module.secrets.db_secret_arn
-  redis_secret_arn = module.secrets.redis_secret_arn
-  jwt_secret_arn   = module.secrets.jwt_secret_arn
+  project_name           = var.project_name
+  environment            = var.environment
+  db_secret_arn          = module.secrets.db_secret_arn
+  redis_secret_arn       = module.secrets.redis_secret_arn
+  jwt_secret_arn         = module.secrets.jwt_secret_arn
+  kms_encryption_key_arn = module.kms.symmetric_key_arn
+  kms_signing_key_arn    = module.kms.asymmetric_signing_key_arn
 }
 
 # ── 5. Private ECR Repository for Backend Container ───────────────────────────
@@ -123,14 +134,17 @@ module "ecs" {
   log_retention_days      = 30
 
   # Internal network endpoints & secrets
-  rds_proxy_endpoint = module.rds_proxy.proxy_endpoint
-  db_name            = var.db_name
-  db_username        = var.db_username
-  db_secret_arn      = module.secrets.db_secret_arn
-  redis_endpoint     = module.elasticache.primary_endpoint_address
-  redis_port         = module.elasticache.port
-  redis_secret_arn   = module.secrets.redis_secret_arn
-  jwt_secret_arn     = module.secrets.jwt_secret_arn
+  rds_proxy_endpoint     = module.rds_proxy.proxy_endpoint
+  db_name                = var.db_name
+  db_username            = var.db_username
+  db_secret_arn          = module.secrets.db_secret_arn
+  redis_endpoint         = module.elasticache.primary_endpoint_address
+  redis_port             = module.elasticache.port
+  redis_secret_arn       = module.secrets.redis_secret_arn
+  jwt_secret_arn         = module.secrets.jwt_secret_arn
+  kms_provider           = var.kms_provider
+  kms_encryption_key_arn = module.kms.symmetric_key_arn
+  kms_signing_key_arn    = module.kms.asymmetric_signing_key_arn
 }
 
 # ── 11. S3 Frontend Hosting & CloudFront Edge Distribution ────────────────────

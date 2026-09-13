@@ -4,7 +4,7 @@ Centralized settings management using Pydantic Settings.
 All secrets must come from environment variables — never hardcoded.
 """
 from functools import lru_cache
-from typing import List
+from typing import List, Optional
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -83,6 +83,33 @@ class Settings(BaseSettings):
     )
     mock_kms_signing_key: str = Field(
         default="bsea_ed25519_seed_32_bytes_chng"
+    )
+
+    # ── KMS Cryptographic Provider Configuration (Phase 3C-3) ───────────────
+    kms_provider: str = Field(
+        default="mock",
+        alias="KMS_PROVIDER",
+        description="KMS Provider: 'mock' for local development/testing, 'aws' for production/staging"
+    )
+    aws_region: str = Field(
+        default="ap-south-1",
+        alias="AWS_REGION",
+        description="AWS Region for KMS and cloud services"
+    )
+    kms_encryption_key_id: str = Field(
+        default="",
+        alias="KMS_ENCRYPTION_KEY_ID",
+        description="AWS KMS Symmetric Key ARN or Key ID for AES-256 envelope encryption"
+    )
+    kms_signing_key_id: str = Field(
+        default="",
+        alias="KMS_SIGNING_KEY_ID",
+        description="AWS KMS Asymmetric Ed25519 Key ARN or Key ID for signing"
+    )
+    kms_endpoint_url: Optional[str] = Field(
+        default=None,
+        alias="KMS_ENDPOINT_URL",
+        description="Custom KMS endpoint URL (e.g. for testing/localstack)"
     )
 
     # ── CORS ─────────────────────────────────────────────────────────────────
