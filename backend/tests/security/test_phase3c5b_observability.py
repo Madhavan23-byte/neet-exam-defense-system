@@ -358,7 +358,7 @@ def test_T14_metric_cardinality_invariants():
     assert base_cardinality <= 530, f"Base cardinality {base_cardinality} exceeds ceiling 530"
     assert expanded_cardinality <= 1400, f"Expanded cardinality {expanded_cardinality} exceeds ceiling 1400"
     assert base_cardinality == 520, f"Expected exactly 520 base series, calculated {base_cardinality}"
-    assert expanded_cardinality == 1384, f"Expected exactly 1384 expanded series, calculated {expanded_cardinality}"
+    assert expanded_cardinality == 1390, f"Expected exactly 1390 expanded series, calculated {expanded_cardinality}"
 
 
 # ── T15: Histogram Expansion Correctness ─────────────────────────────────────

@@ -197,7 +197,7 @@ resource "aws_cloudwatch_metric_alarm" "question_grant_denials_spike" {
 resource "aws_cloudwatch_log_metric_filter" "break_glass" {
   name           = "${var.project_name}-${var.environment}-break-glass-filter"
   log_group_name = var.log_group_name
-  pattern        = "{ ($.logger = \"bsea.telemetry\") && ($.event_type = \"BREAK_GLASS_*\") }"
+  pattern        = "{ ($.logger = \"bsea.telemetry\") && (($.event_type = \"BREAK_GLASS_REQUEST\") || ($.event_type = \"BREAK_GLASS_ACTIVATION\") || ($.event_type = \"BREAK_GLASS_APPROVED\") || ($.event_type = \"BREAK_GLASS_REJECTED\") || ($.event_type = \"BREAK_GLASS_REVOKED\") || ($.event_type = \"BREAK_GLASS_EXPIRED\")) }"
 
   metric_transformation {
     name          = "BreakGlassEventsCount"
@@ -253,7 +253,7 @@ resource "aws_cloudwatch_metric_alarm" "audit_sealer_failure" {
 resource "aws_cloudwatch_log_metric_filter" "verifier_failures" {
   name           = "${var.project_name}-${var.environment}-verifier-failures-filter"
   log_group_name = var.log_group_name
-  pattern        = "{ ($.logger = \"bsea.audit.service\") && ($.level = \"ERROR\") && ($.message = \"*Deep Verifier Failed*\") }"
+  pattern        = "{ ($.logger = \"bsea.audit.service\") && ($.level = \"ERROR\") }"
 
   metric_transformation {
     name          = "AuditVerifierFailuresCount"

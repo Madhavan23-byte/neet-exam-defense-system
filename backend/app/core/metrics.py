@@ -84,7 +84,7 @@ ALLOWED_VERIFIER_RESULTS: Set[str] = {"pass", "fail", "unresolved", "stale"}
 ALLOWED_DEPENDENCIES: Set[str] = {"postgres", "redis", "kms"}
 
 HTTP_LATENCY_BUCKETS: Tuple[float, ...] = (0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0)
-SEALER_DURATION_BUCKETS: Tuple[float, ...] = (0.1, 0.5, 1.0, 2.5, 5.0, 10.0)
+SEALER_DURATION_BUCKETS: Tuple[float, ...] = (0.05, 0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0)
 
 
 # ── Metric Domain Registry & Specification ────────────────────────────────────
