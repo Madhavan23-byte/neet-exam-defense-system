@@ -432,6 +432,11 @@ class AuditSealer:
         logger.info(
             f"Successfully sealed Epoch {next_epoch_id} (range [{start_chain_seq}, {end_chain_seq}], count={record_count})"
         )
+        try:
+            from app.core.metrics import metrics_registry
+            metrics_registry.set_gauge("bsea_audit_sealer_last_epoch_id", float(next_epoch_id))
+        except Exception:
+            pass
         return next_epoch_id
 
     async def run_once(self, batch_size: int = 1000) -> SealerCycleResult:
@@ -443,12 +448,20 @@ class AuditSealer:
         4. Evaluate and seal ready epochs
         5. Release advisory lock
         """
+        import time
+        start_t = time.perf_counter()
+
         async with self.engine.connect() as conn:
             acquired = await self.acquire_leadership(conn)
             if not acquired:
                 logger.info(
                     f"Sealer advisory lock 0x{SEALER_ADVISORY_LOCK_ID:x} is held by another worker. Skipping."
                 )
+                try:
+                    from app.core.metrics import metrics_registry
+                    metrics_registry.inc_counter("bsea_audit_sealer_cycles_total", {"status": "locked"})
+                except Exception:
+                    pass
                 return SealerCycleResult(
                     status="LOCKED",
                     message="Sealer advisory lock held by another process.",
@@ -457,6 +470,31 @@ class AuditSealer:
             total_incorporated = 0
             sealed_epochs = []
             try:
+                # Update backlog and quarantine count (observational only, non-fatal)
+                try:
+                    from app.core.metrics import metrics_registry
+                    res_backlog = await conn.execute(
+                        text("""
+                            SELECT COUNT(*) FROM audit_logs al
+                            WHERE NOT EXISTS (
+                                SELECT 1 FROM audit_chain_links acl WHERE acl.audit_log_id = al.id
+                            )
+                            AND NOT EXISTS (
+                                SELECT 1 FROM audit_poison_quarantine apq WHERE apq.audit_log_id = al.id
+                            );
+                        """)
+                    )
+                    backlog_count = res_backlog.scalar() or 0
+                    metrics_registry.set_gauge("bsea_audit_sealer_backlog_records", float(backlog_count))
+
+                    res_quarantine = await conn.execute(
+                        text("SELECT COUNT(*) FROM audit_poison_quarantine;")
+                    )
+                    quarantine_count = res_quarantine.scalar() or 0
+                    metrics_registry.set_gauge("bsea_audit_poison_events_quarantined_total", float(quarantine_count))
+                except Exception:
+                    pass
+
                 # Incorporate all ready unsealed batches
                 while True:
                     count = await self.incorporate_unsealed_events(conn, batch_size=batch_size)
@@ -474,9 +512,19 @@ class AuditSealer:
                 if total_incorporated == 0 and not sealed_epochs:
                     status = "NOOP"
                     message = "No unsealed events or ready epochs."
+                    cycle_status = "noop"
                 else:
                     status = "SUCCESS"
                     message = f"Incorporated {total_incorporated} links, sealed {len(sealed_epochs)} epochs."
+                    cycle_status = "success"
+
+                duration = time.perf_counter() - start_t
+                try:
+                    from app.core.metrics import metrics_registry
+                    metrics_registry.inc_counter("bsea_audit_sealer_cycles_total", {"status": cycle_status})
+                    metrics_registry.observe_histogram("bsea_audit_sealer_cycle_duration_seconds", duration, {"status": "success"})
+                except Exception:
+                    pass
 
                 return SealerCycleResult(
                     status=status,
@@ -485,6 +533,15 @@ class AuditSealer:
                     epoch_ids=sealed_epochs,
                     message=message,
                 )
+            except Exception as e:
+                duration = time.perf_counter() - start_t
+                try:
+                    from app.core.metrics import metrics_registry
+                    metrics_registry.inc_counter("bsea_audit_sealer_cycles_total", {"status": "error"})
+                    metrics_registry.observe_histogram("bsea_audit_sealer_cycle_duration_seconds", duration, {"status": "error"})
+                except Exception:
+                    pass
+                raise
             finally:
                 await self.release_leadership(conn)
 

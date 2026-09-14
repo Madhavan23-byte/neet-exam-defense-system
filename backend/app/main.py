@@ -12,8 +12,15 @@ from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 from app.core.dependencies import limiter
 
+from app.core.logging import setup_logging
+from app.core.telemetry_middleware import BSEAHttpTelemetryMiddleware
+
 settings = get_settings()
-logging.basicConfig(level=logging.INFO)
+setup_logging(
+    environment=settings.environment,
+    level=getattr(settings, "log_level", "INFO"),
+    app_version=settings.app_version,
+)
 logger = logging.getLogger(__name__)
 
 @asynccontextmanager
@@ -55,6 +62,9 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Observability & telemetry middleware (Phase 3C-5B)
+app.add_middleware(BSEAHttpTelemetryMiddleware)
 
 # Set up CORS
 app.add_middleware(

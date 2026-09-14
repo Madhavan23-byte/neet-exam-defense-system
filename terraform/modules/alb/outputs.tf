@@ -22,3 +22,13 @@ output "waf_web_acl_arn" {
   value       = aws_wafv2_web_acl.alb.arn
   description = "The ARN of the regional WAF Web ACL attached to the ALB"
 }
+
+output "alb_arn_suffix" {
+  value       = aws_lb.alb.arn_suffix
+  description = "The ARN suffix of the Application Load Balancer for CloudWatch metrics"
+}
+
+output "target_group_arn_suffix" {
+  value       = aws_lb_target_group.ecs.arn_suffix
+  description = "The ARN suffix of the target group for CloudWatch metrics"
+}

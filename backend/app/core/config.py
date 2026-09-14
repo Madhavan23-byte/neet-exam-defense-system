@@ -181,6 +181,13 @@ class Settings(BaseSettings):
     anomaly_bulk_question_threshold: int = 20
     anomaly_failed_mfa_threshold: int = 3
 
+    # ── Observability & Telemetry (Phase 3C-5B) ────────────────────────────────
+    metrics_scraper_key: str = Field(
+        default="bsea-metrics-scraper-secret-local",
+        alias="METRICS_SCRAPER_KEY",
+        description="Pre-shared key for /metrics endpoint scraping authentication",
+    )
+
 
 @lru_cache()
 def get_settings() -> Settings:

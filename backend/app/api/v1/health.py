@@ -5,7 +5,7 @@ Provides liveness and readiness probes for orchestrators (ECS, Docker Compose, K
 from __future__ import annotations
 
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -105,3 +105,34 @@ async def readiness_probe():
         "checks": checks,
     }
     return JSONResponse(status_code=status_code, content=response_payload)
+
+
+from fastapi import Header, Response
+from app.core.metrics import metrics_registry
+
+
+@router.get("/metrics")
+async def get_prometheus_metrics(
+    x_bsea_metrics_key: Optional[str] = Header(None, alias="X-BSEA-Metrics-Key"),
+):
+    """
+    Phase 3C-5B: Production-safe Prometheus metrics endpoint.
+    Requires internal scraper authentication via X-BSEA-Metrics-Key header.
+    Never exposes question content, answer keys, candidate data, or secrets.
+    """
+    expected_key = getattr(settings, "metrics_scraper_key", "bsea-metrics-scraper-secret-local")
+    if not x_bsea_metrics_key or x_bsea_metrics_key != expected_key:
+        logger.warning(
+            "Unauthorized metrics scrape attempt",
+            extra={"action": "METRICS_SCRAPE", "result": "DENIED", "error_code": "FORBIDDEN"},
+        )
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content={"detail": "Forbidden: Invalid or missing metrics authorization"},
+        )
+
+    content = metrics_registry.generate_prometheus_text()
+    return Response(
+        content=content,
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )

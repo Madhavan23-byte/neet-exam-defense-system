@@ -519,14 +519,25 @@ class AuditService:
         # Primary direct execution
         try:
             if self.db is not None:
-                return await self._verify_chain_deep_internal(
+                res = await self._verify_chain_deep_internal(
                     self.db, cutover_seq, 0.0, False
                 )
             else:
                 async with AsyncSessionLocal() as prim_session:
-                    return await self._verify_chain_deep_internal(
+                    res = await self._verify_chain_deep_internal(
                         prim_session, cutover_seq, 0.0, False
                     )
+            try:
+                from app.core.metrics import metrics_registry
+                if res.get("status") == "PASS":
+                    metrics_registry.set_gauge("bsea_audit_verifier_status", 1.0, {"result": "pass"})
+                    metrics_registry.set_gauge("bsea_audit_verifier_status", 0.0, {"result": "fail"})
+                else:
+                    metrics_registry.set_gauge("bsea_audit_verifier_status", 0.0, {"result": "pass"})
+                    metrics_registry.set_gauge("bsea_audit_verifier_status", 1.0, {"result": "fail"})
+            except Exception:
+                pass
+            return res
         except Exception as e:
             return {
                 "status": "UNAVAILABLE",

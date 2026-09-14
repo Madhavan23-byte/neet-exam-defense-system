@@ -63,3 +63,8 @@ output "kms_signing_alias" {
   value       = module.kms.asymmetric_signing_alias_arn
   description = "ARN of the alias for the AWS KMS asymmetric Ed25519 signing key"
 }
+
+output "observability_sns_topic_arn" {
+  description = "The ARN of the KMS-encrypted SNS topic for observability alarms"
+  value       = module.cloudwatch_alarms.sns_topic_arn
+}

@@ -157,3 +157,15 @@ module "s3_frontend" {
   custom_api_domain = var.custom_api_domain
   force_destroy     = true # Staging teardown-friendly
 }
+
+# ── 12. Observability & Security Telemetry Alarms (Phase 3C-5B) ───────────────
+module "cloudwatch_alarms" {
+  source = "../../modules/cloudwatch_alarms"
+
+  project_name            = var.project_name
+  environment             = var.environment
+  alb_arn_suffix          = module.alb.alb_arn_suffix
+  target_group_arn_suffix = module.alb.target_group_arn_suffix
+  log_group_name          = "/ecs/${var.project_name}-${var.environment}-backend"
+  kms_key_arn             = module.kms.symmetric_key_arn
+}
