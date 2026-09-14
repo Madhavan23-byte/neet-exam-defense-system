@@ -25,6 +25,7 @@ Section 8 Requirements:
 from __future__ import annotations
 
 import asyncio
+import os
 import copy
 import subprocess
 import sys
@@ -369,75 +370,139 @@ def test_12_triggers_exist_after_migration():
 # ── Test 13: Trigger is removed correctly during downgrade ───────────────────
 
 def test_13_triggers_removed_during_downgrade():
-    # Execute downgrade to c4b2d3e4f5a6
-    res_down = subprocess.run(
-        [sys.executable, "-m", "alembic", "downgrade", "-1"],
-        cwd=BACKEND_DIR,
-        capture_output=True,
-        text=True,
-    )
-    assert res_down.returncode == 0, f"Alembic downgrade failed: {res_down.stderr}"
+    """C-4: Test Alembic downgrade triggers removal using an isolated ephemeral test database."""
+    import uuid
+    ephemeral_db = f"bsea_test_ephemeral_t13_{uuid.uuid4().hex[:8]}"
+    admin_url = "postgresql://postgres:root@localhost:5432/postgres"
 
-    async def _check_no_triggers():
-        conn = await asyncpg.connect(DB_URL)
-        try:
-            triggers = await conn.fetch("""
-                SELECT trigger_name FROM information_schema.triggers
-                WHERE event_object_table IN ('audit_logs', 'audit_chain_links', 'audit_epoch_seals');
-            """)
-            assert len(triggers) == 0, f"Expected 0 triggers after downgrade, found: {triggers}"
-        finally:
-            await conn.close()
+    async def _setup_db():
+        conn = await asyncpg.connect(admin_url)
+        await conn.execute(f'CREATE DATABASE "{ephemeral_db}";')
+        await conn.close()
 
-    asyncio.run(_check_no_triggers())
+    async def _teardown_db():
+        conn = await asyncpg.connect(admin_url)
+        await conn.execute(f'DROP DATABASE IF EXISTS "{ephemeral_db}" WITH (FORCE);')
+        await conn.close()
 
-    # Restore upgrade so database remains at current head
-    res_up = subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
-        cwd=BACKEND_DIR,
-        capture_output=True,
-        text=True,
-    )
-    assert res_up.returncode == 0, f"Alembic upgrade restoration failed: {res_up.stderr}"
+    asyncio.run(_setup_db())
+    try:
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"postgresql+asyncpg://postgres:root@localhost:5432/{ephemeral_db}"
+        target_db_url = f"postgresql://postgres:root@localhost:5432/{ephemeral_db}"
+
+        # 1. Upgrade ephemeral DB to head
+        res_up1 = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=BACKEND_DIR,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert res_up1.returncode == 0, f"Initial upgrade failed: {res_up1.stderr}"
+
+        # 2. Downgrade by 1
+        res_down = subprocess.run(
+            [sys.executable, "-m", "alembic", "downgrade", "-1"],
+            cwd=BACKEND_DIR,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert res_down.returncode == 0, f"Alembic downgrade failed: {res_down.stderr}"
+
+        # 3. Check triggers in ephemeral DB
+        async def _check_no_triggers():
+            conn = await asyncpg.connect(target_db_url)
+            try:
+                triggers = await conn.fetch("""
+                    SELECT trigger_name FROM information_schema.triggers
+                    WHERE event_object_table IN ('audit_poison_quarantine');
+                """)
+                assert len(triggers) == 0, f"Expected 0 triggers after downgrade, found: {triggers}"
+            finally:
+                await conn.close()
+
+        asyncio.run(_check_no_triggers())
+
+    finally:
+        asyncio.run(_teardown_db())
 
 
-# ── Test 14: Upgrade -> Downgrade -> Upgrade succeeds ────────────────────────
+# ── Test 14: Upgrade -> Downgrade -> Upgrade succeeds (Ephemeral DB) ──────────
 
 def test_14_upgrade_downgrade_upgrade_succeeds():
-    # 1. Downgrade
-    res_down = subprocess.run(
-        [sys.executable, "-m", "alembic", "downgrade", "-1"],
-        cwd=BACKEND_DIR,
-        capture_output=True,
-        text=True,
-    )
-    assert res_down.returncode == 0, f"Downgrade failed: {res_down.stderr}"
+    """C-4: Test Alembic migration lifecycle using an isolated ephemeral test database."""
+    import uuid
+    ephemeral_db = f"bsea_test_ephemeral_t14_{uuid.uuid4().hex[:8]}"
+    admin_url = "postgresql://postgres:root@localhost:5432/postgres"
 
-    # 2. Upgrade
-    res_up = subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
-        cwd=BACKEND_DIR,
-        capture_output=True,
-        text=True,
-    )
-    assert res_up.returncode == 0, f"Upgrade failed: {res_up.stderr}"
+    async def _setup_db():
+        conn = await asyncpg.connect(admin_url)
+        await conn.execute(f'CREATE DATABASE "{ephemeral_db}";')
+        await conn.close()
 
-    # Verify head reached and tables exist
-    async def _verify_tables():
-        conn = await asyncpg.connect(DB_URL)
-        try:
-            tables = await conn.fetch("""
-                SELECT table_name FROM information_schema.tables
-                WHERE table_name IN ('audit_logs', 'audit_chain_links', 'audit_epoch_seals');
-            """)
-            names = {t["table_name"] for t in tables}
-            assert "audit_logs" in names
-            assert "audit_chain_links" in names
-            assert "audit_epoch_seals" in names
-        finally:
-            await conn.close()
+    async def _teardown_db():
+        conn = await asyncpg.connect(admin_url)
+        await conn.execute(f'DROP DATABASE IF EXISTS "{ephemeral_db}" WITH (FORCE);')
+        await conn.close()
 
-    asyncio.run(_verify_tables())
+    asyncio.run(_setup_db())
+    try:
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"postgresql+asyncpg://postgres:root@localhost:5432/{ephemeral_db}"
+        target_db_url = f"postgresql://postgres:root@localhost:5432/{ephemeral_db}"
+
+        # 1. Upgrade to head
+        res_up1 = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=BACKEND_DIR,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert res_up1.returncode == 0, f"Upgrade 1 failed: {res_up1.stderr}"
+
+        # 2. Downgrade by 1
+        res_down = subprocess.run(
+            [sys.executable, "-m", "alembic", "downgrade", "-1"],
+            cwd=BACKEND_DIR,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert res_down.returncode == 0, f"Downgrade failed: {res_down.stderr}"
+
+        # 3. Upgrade back to head
+        res_up2 = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=BACKEND_DIR,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert res_up2.returncode == 0, f"Upgrade 2 failed: {res_up2.stderr}"
+
+        # Verify tables in ephemeral DB
+        async def _verify_tables():
+            conn = await asyncpg.connect(target_db_url)
+            try:
+                tables = await conn.fetch("""
+                    SELECT table_name FROM information_schema.tables
+                    WHERE table_name IN ('audit_logs', 'audit_chain_links', 'audit_epoch_seals', 'audit_poison_quarantine');
+                """)
+                names = {t["table_name"] for t in tables}
+                assert "audit_logs" in names
+                assert "audit_chain_links" in names
+                assert "audit_epoch_seals" in names
+                assert "audit_poison_quarantine" in names
+            finally:
+                await conn.close()
+
+        asyncio.run(_verify_tables())
+
+    finally:
+        asyncio.run(_teardown_db())
 
 
 # ── Test 15: Canonical event hash is deterministic ───────────────────────────

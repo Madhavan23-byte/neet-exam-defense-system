@@ -306,22 +306,103 @@ async def test_X_Y_Z_historical_backfill_and_live_cutover():
 
 @pytest.mark.asyncio
 async def test_F_AD_advisory_lock_serialization_and_multi_worker():
-    """F & AD. Advisory lock 0x4253454100000001 serializes sealer workers; worker 2 yields LOCKED."""
+    """C-3 / F & AD. Session advisory lock 0x4253454100000001 (4779267104085409793)
+    Use four distinct OS processes/interpreters contending for the lock to verify
+    PostgreSQL advisory-lock mutual exclusion and contiguous sequence behavior.
+    """
+    import subprocess, sys, time, json, tempfile, os
+
+    # 1. Intra-process test
     sealer1 = AuditSealer()
     sealer2 = AuditSealer()
 
     async with engine.connect() as conn1:
-        # Worker 1 acquires lock
         locked = await sealer1.acquire_leadership(conn1)
         assert locked is True
 
-        # Worker 2 attempts run_once concurrently
         res2 = await sealer2.run_once()
         assert res2.status == "LOCKED"
 
-        # Worker 1 releases lock
         released = await sealer1.release_leadership(conn1)
         assert released is True
+
+    # 2. C-3: Four distinct OS processes/interpreters contending for 0x4253454100000001
+    lock_id = 4779267104085409793  # 0x4253454100000001
+    db_url = "postgresql://postgres:root@localhost:5432/bsea"
+
+    worker_code = """import sys, asyncio, json, time
+import asyncpg
+
+async def main():
+    w_id = sys.argv[1]
+    lock_id = int(sys.argv[2])
+    db_url = sys.argv[3]
+    hold_sec = float(sys.argv[4])
+
+    conn = await asyncpg.connect(db_url)
+    try:
+        acquired = await conn.fetchval(f"SELECT pg_try_advisory_lock({lock_id});")
+        if acquired:
+            try:
+                await asyncio.sleep(hold_sec)
+                print(json.dumps({"worker": w_id, "status": "ACQUIRED"}))
+            finally:
+                await conn.execute(f"SELECT pg_advisory_unlock({lock_id});")
+        else:
+            print(json.dumps({"worker": w_id, "status": "LOCKED"}))
+    finally:
+        await conn.close()
+
+asyncio.run(main())
+"""
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+        f.write(worker_code)
+        temp_worker_path = f.name
+
+    try:
+        # Worker 1 acquires and holds for 1.2s
+        p1 = subprocess.Popen([sys.executable, temp_worker_path, "1", str(lock_id), db_url, "1.2"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        time.sleep(0.3)
+
+        # Workers 2, 3, 4 contend concurrently while P1 holds the lock
+        p2 = subprocess.Popen([sys.executable, temp_worker_path, "2", str(lock_id), db_url, "0.1"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        p3 = subprocess.Popen([sys.executable, temp_worker_path, "3", str(lock_id), db_url, "0.1"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        p4 = subprocess.Popen([sys.executable, temp_worker_path, "4", str(lock_id), db_url, "0.1"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        out1, err1 = p1.communicate()
+        out2, err2 = p2.communicate()
+        out3, err3 = p3.communicate()
+        out4, err4 = p4.communicate()
+
+        assert p1.returncode == 0, f"Worker 1 failed: {err1.decode()}"
+        assert p2.returncode == 0, f"Worker 2 failed: {err2.decode()}"
+        assert p3.returncode == 0, f"Worker 3 failed: {err3.decode()}"
+        assert p4.returncode == 0, f"Worker 4 failed: {err4.decode()}"
+
+        r1 = json.loads(out1.decode().strip())
+        r2 = json.loads(out2.decode().strip())
+        r3 = json.loads(out3.decode().strip())
+        r4 = json.loads(out4.decode().strip())
+
+        assert r1["status"] == "ACQUIRED", f"Worker 1 should acquire lock: {r1}"
+        assert r2["status"] == "LOCKED", f"Worker 2 should be LOCKED: {r2}"
+        assert r3["status"] == "LOCKED", f"Worker 3 should be LOCKED: {r3}"
+        assert r4["status"] == "LOCKED", f"Worker 4 should be LOCKED: {r4}"
+    finally:
+        if os.path.exists(temp_worker_path):
+            os.remove(temp_worker_path)
+
+    # Verify contiguous sequence behavior after sequential sealing
+    audit_svc = AuditService()
+    await audit_svc.log_security_event(event_type="TEST_CONTIG_1", action=f"ACT_{new_uuid()}")
+    await audit_svc.log_security_event(event_type="TEST_CONTIG_2", action=f"ACT_{new_uuid()}")
+    await sealer1.run_once()
+    await sealer2.run_once()
+
+    async with engine.connect() as conn:
+        seqs = (await conn.execute(text("SELECT chain_seq FROM audit_chain_links ORDER BY chain_seq ASC;"))).scalars().all()
+        for idx in range(1, len(seqs)):
+            assert seqs[idx] == seqs[idx - 1] + 1, f"Sequence gap/discontinuity detected between {seqs[idx-1]} and {seqs[idx]}"
 
 
 @pytest.mark.asyncio
@@ -599,18 +680,24 @@ async def test_M_no_overlapping_epochs():
 
 @pytest.mark.asyncio
 async def test_AC_kms_signing_strictly_outside_db_transactions():
-    """AC. Long-running KMS signing MUST occur strictly outside any database transaction."""
-    kms_tx_state = {}
+    """C-2 / AC. Long-running KMS signing MUST occur strictly outside any database transaction.
+    Inspect connection transaction state from the exact KMS sign callback and assert:
+    conn.in_transaction() is False."""
+    kms_tx_inspected = []
 
     class MonitoredKMS:
         def __init__(self, inner):
             self.inner = inner
             self.provider_name = getattr(inner, "provider_name", "MonitoredKMS")
             self._key_id = getattr(inner, "_key_id", "mock-kms-key-001")
+            self.active_conn = None
 
         def sign(self, payload, key_id=None):
-            # Record whether connection was passed or transaction is open
-            kms_tx_state["called"] = True
+            # C-2 exact requirement: inspect connection transaction state from the exact KMS sign callback
+            if self.active_conn is not None:
+                in_tx = self.active_conn.in_transaction()
+                kms_tx_inspected.append(in_tx)
+                assert in_tx is False, f"CRITICAL: KMS sign called while DB connection was in transaction: {in_tx}"
             return self.inner.sign(payload, key_id=key_id)
 
         def verify(self, *args, **kwargs):
@@ -624,44 +711,83 @@ async def test_AC_kms_signing_strictly_outside_db_transactions():
 
     sealer = AuditSealer(kms=monitored, max_epoch_age_seconds=0)
     async with engine.connect() as conn:
+        monitored.active_conn = conn
         locked = await sealer.acquire_leadership(conn)
         assert locked is True
         try:
-            # Incorporate
             await sealer.incorporate_unsealed_events(conn)
-            # Before calling evaluate_and_seal_epoch: verify conn is not in transaction
-            assert conn.in_transaction() is False
             epoch_id = await sealer.evaluate_and_seal_epoch(conn)
             if epoch_id:
-                assert kms_tx_state.get("called") is True
+                assert len(kms_tx_inspected) > 0, "KMS sign callback was not called"
+                assert all(tx is False for tx in kms_tx_inspected), "KMS sign occurred inside active transaction"
         finally:
+            monitored.active_conn = None
             await sealer.release_leadership(conn)
 
 
 @pytest.mark.asyncio
 async def test_V_W_crash_recovery_and_deterministic_reconstruction():
-    """V & W. Crash recovery reconstructs identical Merkle root and manifest from immutable frozen range."""
-    # Simulate: range of links incorporated into audit_chain_links, but epoch seal fails
+    """C-1 / V & W. Capture successful KMS signature, simulate crash after signing but before Transaction D,
+    retry the same immutable manifest/key, and assert deterministic signature equality plus successful verification."""
     audit_svc = AuditService()
     await audit_svc.log_security_event(event_type="TEST_CRASH_RECOVERY", action=f"ACT_{new_uuid()}")
 
-    sealer = AuditSealer(max_epoch_age_seconds=0)
+    real_kms = get_kms()
+    captured_signatures = []
 
-    # First attempt: simulate crash before Transaction D by raising error in KMS sign
-    failing_kms = MagicMock()
-    failing_kms.sign.side_effect = RuntimeError("Simulated worker crash before Transaction D")
-    failing_kms.verify = get_kms().verify
-    failing_sealer = AuditSealer(kms=failing_kms, max_epoch_age_seconds=0)
+    class CrashAfterSigningKMS:
+        def __init__(self, inner):
+            self.inner = inner
+            self.provider_name = getattr(inner, "provider_name", "CrashAfterSigningKMS")
+            self._key_id = getattr(inner, "_key_id", "mock-kms-key-001")
+            self.call_count = 0
 
-    try:
-        await failing_sealer.run_once()
-    except Exception:
-        pass
+        def sign(self, payload, key_id=None):
+            self.call_count += 1
+            sig = self.inner.sign(payload, key_id=key_id)
+            captured_signatures.append(sig)
+            if self.call_count == 1:
+                # C-1 requirement: Capture successful signature, then simulate crash after signing but before Transaction D commits
+                raise RuntimeError("Simulated worker crash after KMS signing but before Transaction D commit")
+            return sig
 
-    # Second attempt: normal sealer runs, recovers the exact frozen range, signs and commits
-    res = await sealer.run_once()
-    assert res.status in ("SUCCESS", "NOOP")
+        def verify(self, *args, **kwargs):
+            return self.inner.verify(*args, **kwargs)
 
-    # Verify chain integrity
+    crashing_kms = CrashAfterSigningKMS(real_kms)
+    sealer1 = AuditSealer(kms=crashing_kms, max_epoch_age_seconds=0)
+
+    # Attempt 1: Signs successfully, signature captured, crash occurs before commit
+    with pytest.raises((RuntimeError, KMSSealingError), match="Simulated worker crash after KMS signing"):
+        async with engine.connect() as conn:
+            locked = await sealer1.acquire_leadership(conn)
+            assert locked is True
+            try:
+                await sealer1.incorporate_unsealed_events(conn)
+                await sealer1.evaluate_and_seal_epoch(conn)
+            finally:
+                await sealer1.release_leadership(conn)
+
+    assert len(captured_signatures) == 1, "Attempt 1 must capture successful KMS signature"
+    sig1 = captured_signatures[0]
+
+    # Attempt 2: Sealer retries the same immutable frozen range and manifest with the same key
+    sealer2 = AuditSealer(kms=crashing_kms, max_epoch_age_seconds=0)
+    async with engine.connect() as conn:
+        locked = await sealer2.acquire_leadership(conn)
+        assert locked is True
+        try:
+            await sealer2.incorporate_unsealed_events(conn)
+            epoch_id = await sealer2.evaluate_and_seal_epoch(conn)
+            assert epoch_id is not None, "Retry after crash must succeed in sealing epoch"
+        finally:
+            await sealer2.release_leadership(conn)
+
+    assert len(captured_signatures) == 2, "Attempt 2 must invoke KMS signing"
+    sig2 = captured_signatures[1]
+
+    # C-1 assertions: deterministic signature equality and successful verification
+    assert sig1.signature_b64 == sig2.signature_b64, "Deterministic KMS signature equality failed across retries!"
+
     v = await audit_svc.verify_chain()
     assert v["valid"] is True

@@ -635,6 +635,9 @@ class AuditLog(Base):
     chain_link: Mapped[Optional["AuditChainLink"]] = relationship(
         "AuditChainLink", back_populates="audit_log", uselist=False
     )
+    quarantine_entry: Mapped[Optional["AuditPoisonQuarantine"]] = relationship(
+        "AuditPoisonQuarantine", back_populates="audit_log", uselist=False
+    )
 
     __table_args__ = (
         Index("ix_audit_actor", "actor_id"),
@@ -716,6 +719,56 @@ class AuditEpochSeal(Base):
         CheckConstraint("start_chain_seq <= end_chain_seq", name="ck_audit_epoch_seals_seq_range"),
         CheckConstraint("record_count > 0", name="ck_audit_epoch_seals_record_count"),
         CheckConstraint("record_count = (end_chain_seq - start_chain_seq + 1)", name="ck_audit_epoch_seals_count_match"),
+    )
+
+
+
+
+# ── Audit Poison Quarantine (Multi-Party Cryptographic Quarantine) ────────────
+
+class AuditPoisonQuarantine(Base):
+    """
+    Append-only cryptographic quarantine ledger for poison audit events.
+    Holds unsealable/malformed events with dual-operator cryptographic authorization.
+    PostgreSQL triggers strictly prohibit UPDATE and DELETE operations.
+    Quarantined rows NEVER enter audit_chain_links.
+    """
+    __tablename__ = "audit_poison_quarantine"
+
+    quarantine_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    audit_log_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("audit_logs.id", ondelete="RESTRICT", name="fk_audit_poison_quarantine_audit_log_id"),
+        nullable=False,
+        unique=True,
+    )
+    detected_event_hash: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    quarantine_reason: Mapped[str] = mapped_column(String(255), nullable=False)
+    incident_reference: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(32), nullable=False, default="BSEA-QUARANTINE-v1")
+    authorization_nonce: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+
+    operator_1_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    operator_1_key_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    operator_1_signature_b64: Mapped[str] = mapped_column(Text, nullable=False)
+
+    operator_2_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    operator_2_key_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    operator_2_signature_b64: Mapped[str] = mapped_column(Text, nullable=False)
+
+    quarantined_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=func.now(), nullable=False
+    )
+
+    audit_log: Mapped["AuditLog"] = relationship("AuditLog", back_populates="quarantine_entry")
+
+    __table_args__ = (
+        UniqueConstraint("audit_log_id", name="uq_quarantine_audit_log_id"),
+        UniqueConstraint("authorization_nonce", name="uq_quarantine_nonce"),
+        CheckConstraint("operator_1_id != operator_2_id", name="ck_quarantine_distinct_operators"),
+        CheckConstraint("operator_1_key_id != operator_2_key_id", name="ck_quarantine_distinct_keys"),
+        Index("ix_audit_poison_quarantine_log_id", "audit_log_id"),
+        Index("ix_audit_poison_quarantine_created_at", "quarantined_at"),
     )
 
 

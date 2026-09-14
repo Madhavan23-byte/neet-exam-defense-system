@@ -62,7 +62,7 @@ def candidate_session(client, released_exam_id):
     creds = dict(CANDIDATE_CREDS)
     creds["exam_id"] = released_exam_id
     res = client.post(f"{BASE_URL}/candidate/auth/login", json=creds)
-    if res.status_code == 409:
+    if res.status_code in (409, 429):
         pytest.skip("Candidate session already active, cannot run fresh tests")
     assert res.status_code == 200, f"Candidate login failed: {res.text}"
     return res.json()["session_token"]

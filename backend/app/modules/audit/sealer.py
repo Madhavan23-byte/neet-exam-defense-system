@@ -151,6 +151,9 @@ class AuditSealer:
             WHERE NOT EXISTS (
                 SELECT 1 FROM audit_chain_links acl WHERE acl.audit_log_id = al.id
             )
+            AND NOT EXISTS (
+                SELECT 1 FROM audit_poison_quarantine apq WHERE apq.audit_log_id = al.id
+            )
             ORDER BY al.created_at ASC, al.id ASC
             LIMIT :batch_size;
         """)
