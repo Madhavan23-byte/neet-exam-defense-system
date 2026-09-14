@@ -19,7 +19,7 @@ async def get_audit_logs(
 ):
     """Get audit logs (AUDITOR/SECURITY_OFFICER only)."""
     result = await db.execute(
-        select(AuditLog).order_by(AuditLog.seq.desc()).limit(limit)
+        select(AuditLog).order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(limit)
     )
     logs = result.scalars().all()
     return [
@@ -34,6 +34,7 @@ async def get_audit_logs(
             "action": l.action,
             "result": l.result.value,
             "risk_score": l.risk_score,
+            "metadata": l.event_metadata or {},
             "timestamp": l.timestamp.isoformat(),
             "event_hash": l.event_hash[:16] + "...",  # Partial hash for display
         }
