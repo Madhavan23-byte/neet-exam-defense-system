@@ -83,6 +83,46 @@ ALLOWED_SEALER_DURATION_STATUSES: Set[str] = {"success", "failed", "noop"}
 ALLOWED_VERIFIER_RESULTS: Set[str] = {"pass", "fail", "unresolved", "stale"}
 ALLOWED_DEPENDENCIES: Set[str] = {"postgres", "redis", "kms"}
 
+# ── Phase 3C-5C Detection & Correlation Finite Label Domains ──────────────────
+ALLOWED_DETECTION_RULES: Set[str] = {
+    "RULE-A",
+    "RULE-B",
+    "RULE-C",
+    "RULE-D",
+    "RULE-E",
+    "RULE-F",
+    "RULE-G",
+    "RULE-H",
+    "RULE-I",
+    "RULE-J",
+    "other",
+}
+
+ALLOWED_DETECTION_SEVERITIES: Set[str] = {
+    "LOW",
+    "MEDIUM",
+    "HIGH",
+    "CRITICAL",
+}
+
+ALLOWED_DETECTION_MODES: Set[str] = {
+    "shadow",
+    "active",
+}
+
+ALLOWED_EVALUATION_RESULTS: Set[str] = {
+    "match",
+    "no_match",
+    "error",
+}
+
+ALLOWED_CLOUDTRAIL_RECONCILIATION_STATUSES: Set[str] = {
+    "correlated",
+    "unresolved",
+    "missing",
+    "conflicting",
+}
+
 HTTP_LATENCY_BUCKETS: Tuple[float, ...] = (0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0)
 SEALER_DURATION_BUCKETS: Tuple[float, ...] = (0.05, 0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0)
 
@@ -220,6 +260,48 @@ METRIC_SPECIFICATIONS: Dict[str, Dict[str, Any]] = {
     },
 }
 
+# ── Phase 3C-5C Detection Metrics Catalog ─────────────────────────────────────
+DETECTION_METRIC_SPECIFICATIONS: Dict[str, Dict[str, Any]] = {
+    "bsea_detection_signals_total": {
+        "type": "counter",
+        "help": "Total count of advisory detection signals generated in shadow or active mode.",
+        "labels": ("rule_id", "severity", "mode"),
+        "domains": {
+            "rule_id": ALLOWED_DETECTION_RULES,
+            "severity": ALLOWED_DETECTION_SEVERITIES,
+            "mode": ALLOWED_DETECTION_MODES,
+        },
+    },
+    "bsea_detection_rule_evaluations_total": {
+        "type": "counter",
+        "help": "Total count of detection rule evaluations by rule identifier and evaluation result.",
+        "labels": ("rule_id", "result"),
+        "domains": {
+            "rule_id": ALLOWED_DETECTION_RULES,
+            "result": ALLOWED_EVALUATION_RESULTS,
+        },
+    },
+    "bsea_cloudtrail_reconciliation_total": {
+        "type": "counter",
+        "help": "Total count of application KMS to CloudTrail management event reconciliations by status.",
+        "labels": ("status",),
+        "domains": {
+            "status": ALLOWED_CLOUDTRAIL_RECONCILIATION_STATUSES,
+        },
+    },
+    "bsea_detection_engine_lag_seconds": {
+        "type": "gauge",
+        "help": "Current processing lag in seconds of the detection engine.",
+        "labels": (),
+        "domains": {},
+    },
+}
+
+ALL_METRIC_SPECIFICATIONS: Dict[str, Dict[str, Any]] = {
+    **METRIC_SPECIFICATIONS,
+    **DETECTION_METRIC_SPECIFICATIONS,
+}
+
 
 # ── Thread-Safe In-Memory Metric Storage ──────────────────────────────────────
 class MetricRegistry:
@@ -235,7 +317,7 @@ class MetricRegistry:
         self._gauges: Dict[str, Dict[Tuple[Tuple[str, str], ...], float]] = {}
         self._histograms: Dict[str, Dict[Tuple[Tuple[str, str], ...], Dict[str, Any]]] = {}
 
-        for m_name, spec in METRIC_SPECIFICATIONS.items():
+        for m_name, spec in ALL_METRIC_SPECIFICATIONS.items():
             if spec["type"] == "counter":
                 self._counters[m_name] = {}
             elif spec["type"] == "gauge":
@@ -248,7 +330,7 @@ class MetricRegistry:
         Validates that provided labels strictly match the allowed schema and allowed finite values.
         Raises ValueError on unexpected labels or dynamic values (cardinality defense).
         """
-        spec = METRIC_SPECIFICATIONS.get(metric_name)
+        spec = ALL_METRIC_SPECIFICATIONS.get(metric_name)
         if not spec:
             raise ValueError(f"Unknown metric: {metric_name}")
 
@@ -311,18 +393,18 @@ class MetricRegistry:
                 if val <= b:
                     h_data["buckets"][b] += 1
 
-    def calculate_cardinality(self) -> Tuple[int, int]:
+    def calculate_cardinality(self, include_detection: bool = False) -> Tuple[int, int]:
         """
-        Calculates the theoretical upper bound of active time series across all metrics.
+        Calculates the theoretical upper bound of active time series across registered metrics.
         Returns (total_base_series, total_expanded_prometheus_series).
-        Mathematically enforces:
-        total_base_series == 530
-        total_expanded_prometheus_series == 1400
+        When include_detection=False (default), strictly calculates Phase 3C-5B metrics (520 base / 1390 expanded).
+        When include_detection=True, calculates combined 5B + 5C metrics (646 base / 1516 expanded).
         """
+        target_specs = ALL_METRIC_SPECIFICATIONS if include_detection else METRIC_SPECIFICATIONS
         total_base = 0
         total_expanded = 0
 
-        for m_name, spec in METRIC_SPECIFICATIONS.items():
+        for m_name, spec in target_specs.items():
             labels = spec["labels"]
             domains = spec["domains"]
             if not labels:
@@ -335,12 +417,36 @@ class MetricRegistry:
             total_base += product
 
             if spec["type"] == "histogram":
-                # N bucket lines + 1 (+Inf) + 1 (_sum) + 1 (_count) = len(buckets) + 3
                 num_bucket_lines = len(spec["buckets"]) + 3
                 total_expanded += product * num_bucket_lines
             else:
                 total_expanded += product
 
+        return total_base, total_expanded
+
+    def calculate_detection_cardinality(self) -> Tuple[int, int]:
+        """
+        Calculates theoretical upper bound for Phase 3C-5C detection metrics only.
+        Mathematically enforces:
+        bsea_detection_signals_total: 11 * 4 * 2 = 88
+        bsea_detection_rule_evaluations_total: 11 * 3 = 33
+        bsea_cloudtrail_reconciliation_total: 4
+        bsea_detection_engine_lag_seconds: 1
+        Total: 88 + 33 + 4 + 1 = 126 base series.
+        """
+        total_base = 0
+        total_expanded = 0
+        for m_name, spec in DETECTION_METRIC_SPECIFICATIONS.items():
+            labels = spec["labels"]
+            domains = spec["domains"]
+            if not labels:
+                product = 1
+            else:
+                product = 1
+                for lbl in labels:
+                    product *= len(domains[lbl])
+            total_base += product
+            total_expanded += product
         return total_base, total_expanded
 
     def generate_prometheus_text(self) -> str:
@@ -350,7 +456,7 @@ class MetricRegistry:
         lines: List[str] = []
 
         with self._lock:
-            for m_name, spec in sorted(METRIC_SPECIFICATIONS.items()):
+            for m_name, spec in sorted(ALL_METRIC_SPECIFICATIONS.items()):
                 m_type = spec["type"]
                 m_help = spec["help"]
 
