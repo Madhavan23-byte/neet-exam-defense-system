@@ -1,0 +1,444 @@
+<USER_REQUEST>
+B-SEA — PHASE 3C ARCHITECTURE REVISION BEFORE IMPLEMENTATION
+
+We have completed and pushed Phase 3B.
+
+Current frozen Git checkpoint:
+
+8398d042096581f6cd2d2987cc2dfa87a758b62f
+
+Do NOT modify Phase 0, Phase 2, Phase 3A, or Phase 3B.
+
+You previously produced the Phase 3C Architecture Proposal.
+
+The architecture direction is approved, but implementation is NOT YET AUTHORIZED.
+
+Before any coding, revise the Phase 3C architecture proposal according to the mandatory corrections below.
+
+==================================================
+CORRECTION 1 — AWS KMS SIGNING / ED25519
+==================================================
+
+Do NOT assume that AWS KMS directly provides compatibility with the existing B-SEA Ed25519 signing implementation.
+
+The current MockKMS uses Ed25519.
+
+Before implementing AWSKMSProvider:
+
+1. Verify the exact AWS KMS asymmetric signing algorithms available in the selected AWS architecture/region.
+2. Determine whether the required Ed25519 signing workflow is directly supported.
+3. If compatible, document the exact key/spec/algorithm.
+4. If incompatible, DO NOT silently replace Ed25519.
+
+Instead provide explicit alternatives:
+
+Option A:
+Preserve Ed25519 using a separately controlled signing implementation/service.
+
+Option B:
+Migrate B-SEA signing to an AWS KMS-supported asymmetric algorithm.
+
+Explain the security and architectural consequences of each.
+
+No cryptographic algorithm change is allowed without an explicit design decision.
+
+==================================================
+CORRECTION 2 — RDS PROXY TERMINOLOGY
+==================================================
+
+Do NOT describe:
+
+AWS RDS Proxy = PgBouncer
+
+Use accurate terminology:
+
+"AWS RDS Proxy provides managed database connection pooling and multiplexing."
+
+Explain its role without claiming that it is simply managed PgBouncer.
+
+==================================================
+CORRECTION 3 — PERFORMANCE NUMBERS
+==================================================
+
+The previously proposed:
+
+100 users → P99 < 200 ms
+500 users → P99 < 350 ms
+1000 users → P99 < 500 ms
+5000 users → P99 < 800 ms
+
+must NOT be described as expected or guaranteed performance.
+
+These are unverified targets.
+
+Rename them:
+
+TARGET / ACCEPTANCE THRESHOLD
+
+Clearly distinguish:
+
+- current measured local performance
+- proposed cloud performance targets
+- actual AWS measurements
+
+Do not claim cloud performance until it is measured.
+
+==================================================
+CORRECTION 4 — REDIS FAILURE BEHAVIOR
+==================================================
+
+Do NOT use a single global Redis failure fallback strategy.
+
+Separate Redis usage by security sensitivity.
+
+At minimum distinguish:
+
+1. Authentication / sensitive security endpoints
+2. Reviewer access
+3. Break-Glass endpoints
+4. Candidate question delivery
+5. Autosave
+6. Heartbeat / telemetry
+
+For security-sensitive controls such as distributed rate limiting:
+
+Redis unavailable should NOT silently degrade into independently permissive per-container limits.
+
+Evaluate fail-closed or conservative edge protection.
+
+For candidate availability-sensitive operations, define an appropriate degraded mode.
+
+Document exactly which controls:
+
+- fail closed
+- fail open
+- degrade gracefully
+- retry
+
+and why.
+
+==================================================
+CORRECTION 5 — FRONTEND CLOUD ARCHITECTURE
+==================================================
+
+Prefer separating static frontend hosting from backend compute.
+
+Preferred production architecture:
+
+CloudFront
+    ↓
+S3
+    ↓
+React static frontend
+
+and:
+
+Internet
+    ↓
+WAF
+    ↓
+ALB
+    ↓
+ECS Fargate
+    ↓
+FastAPI
+    ↓
+PostgreSQL / Redis / KMS
+
+However, preserve Docker Compose local parity:
+
+Docker Compose
+├── React/Nginx
+├── FastAPI
+├── PostgreSQL
+└── Redis
+
+Explain why frontend and backend have different scaling/security characteristics.
+
+Do not unnecessarily over-engineer the student deployment.
+
+==================================================
+CORRECTION 6 — FIPS / COMPLIANCE LANGUAGE
+==================================================
+
+Do NOT claim:
+
+"B-SEA is FIPS certified."
+
+Do NOT casually claim:
+
+"AWS KMS = FIPS 140-3 Level 3/4."
+
+Use precise language.
+
+State that AWS KMS provides AWS-managed cryptographic key protection and that applicable compliance/security characteristics depend on the selected AWS service, region, configuration, and validation scope.
+
+Clearly distinguish:
+
+- B-SEA application security
+- AWS service security/compliance
+- future HSM requirements
+
+==================================================
+CORRECTION 7 — CLOUD COST
+==================================================
+
+All AWS prices must be labeled:
+
+"Illustrative estimate only."
+
+Do not present fixed monthly prices as guaranteed.
+
+State that actual cost depends on:
+
+- AWS region
+- traffic
+- storage
+- requests
+- data transfer
+- logging
+- WAF
+- ALB
+- RDS
+- Redis
+- NAT
+- KMS usage
+- free-tier/credit eligibility
+
+Prioritize a teardown-friendly student architecture.
+
+==================================================
+CORRECTION 8 — DO NOT OVER-ENGINEER PHASE 3C
+==================================================
+
+Split Phase 3C into controlled implementation sub-phases:
+
+Phase 3C-1:
+Cloud foundation
+
+- production Dockerfiles
+- frontend production packaging
+- Redis integration
+- health checks
+- environment configuration
+- local production-parity Compose
+
+Phase 3C-2:
+AWS infrastructure
+
+- Terraform
+- VPC
+- subnets
+- security groups
+- ALB
+- ECS
+- RDS
+- S3
+- IAM
+- Secrets Manager
+
+Phase 3C-3:
+Cryptographic cloud integration
+
+- AWS KMS provider
+- KMSInterface compatibility
+- encryption architecture
+- signing architecture decision
+- key policies
+
+Phase 3C-4:
+Cloud security hardening
+
+- TLS
+- WAF
+- IAM validation
+- network segmentation
+- secret isolation
+- logging/monitoring baseline
+
+Phase 3C-5:
+Cloud validation
+
+- security regression
+- concurrency
+- failure testing
+- Redis failure
+- database failure
+- KMS failure
+- cloud load testing
+
+Do NOT implement all five phases at once.
+
+==================================================
+CORRECTION 9 — CURRENT VS CLOUD VS PRODUCTION
+==================================================
+
+Every component must clearly belong to one of:
+
+A. IMPLEMENTED NOW
+
+B. PHASE 3C IMPLEMENTATION
+
+C. FUTURE PRODUCTION HARDENING
+
+Do not describe planned components as if they already exist.
+
+==================================================
+CORRECTION 10 — SECURITY INVARIANTS
+==================================================
+
+Phase 3C MUST preserve all existing B-SEA security invariants.
+
+Especially:
+
+- authentication
+- RBAC
+- question encryption
+- question sharding
+- answer-key isolation
+- ephemeral authorization
+- session JTI binding
+- Break-Glass quorum
+- role diversity
+- fingerprint validation
+- revocation
+- exam freeze cascade
+- auditability
+- rate limiting
+
+Cloud modernization must not weaken these controls.
+
+==================================================
+CORRECTION 11 — AUDIT ARCHITECTURE
+==================================================
+
+Do NOT claim that Phase 3C automatically solves the previously known multi-worker audit ordering limitation.
+
+Document the current in-process audit queue limitation.
+
+If Phase 3C proposes Redis/Event Streaming for audit ingestion, mark it clearly as:
+
+PROPOSED / FUTURE IMPLEMENTATION
+
+unless actually implemented and validated.
+
+Do not claim immutable distributed audit architecture yet.
+
+==================================================
+CORRECTION 12 — KMS SESSION KEY CACHING
+==================================================
+
+The previous proposal suggested caching encrypted session keys in Redis.
+
+Do not assume this is automatically secure.
+
+Analyze:
+
+- session key lifetime
+- Redis compromise
+- encryption-at-rest
+- TTL
+- invalidation
+- exam/session binding
+- KMS availability
+- blast radius
+
+Determine whether session-key caching is actually necessary for Phase 3C.
+
+If implemented, define strict security requirements.
+
+==================================================
+CORRECTION 13 — NO PREMATURE PRODUCTION CLAIMS
+==================================================
+
+Do NOT use:
+
+- production certified
+- national-scale ready
+- millions of users supported
+- zero-leak guarantee
+- impossible to compromise
+
+Use:
+
+- cloud-deployable
+- experimentally validated
+- prototype
+- staging environment
+- measured performance
+- defined security acceptance criteria
+
+==================================================
+FINAL REVISED DOCUMENT
+==================================================
+
+Produce:
+
+# B-SEA Phase 3C — Revised Architecture Proposal
+
+Sections:
+
+1. Executive Summary
+2. Current Architecture
+3. Current vs Phase 3C vs Future Matrix
+4. Cloud Provider Comparison
+5. AWS Recommendation
+6. Corrected Target Cloud Architecture
+7. Frontend Cloud Architecture
+8. Backend Cloud Architecture
+9. Network Segmentation
+10. Data Classification
+11. IAM Model
+12. Secrets Management
+13. Redis Architecture
+14. KMS Architecture
+15. Ed25519 / Signing Decision
+16. Audit Architecture
+17. Failure Handling
+18. Scalability Targets
+19. Cost-Conscious Architecture
+20. Phase 3C-1 Scope
+21. Phase 3C-2 Scope
+22. Phase 3C-3 Scope
+23. Phase 3C-4 Scope
+24. Phase 3C-5 Scope
+25. Security Tests
+26. Performance Tests
+27. Cloud Failure Tests
+28. Rollback Strategy
+29. Production Gaps
+30. Definition of Done
+
+At the end provide:
+
+PHASE 3C ARCHITECTURE STATUS:
+
+APPROVED FOR IMPLEMENTATION
+or
+REQUIRES FURTHER REVIEW
+
+==================================================
+STRICT STOP CONDITION
+==================================================
+
+DO NOT:
+
+- modify code
+- create files
+- install packages
+- deploy AWS resources
+- modify database schema
+- modify Phase 3B
+- commit
+- push
+
+This task is architecture revision ONLY.
+
+STOP after producing the revised architecture proposal.
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-09-13T19:56:14+05:30.
+</ADDITIONAL_METADATA>
+<USER_SETTINGS_CHANGE>
+The user changed setting `Model Selection` from Gemini 3.8 Flash (High) to Claude Sonnet 4.6 (Thinking). No need to comment on this change if the user doesn't ask about it. If reporting what model you are, please use a human readable name instead of the exact string.
+</USER_SETTINGS_CHANGE>

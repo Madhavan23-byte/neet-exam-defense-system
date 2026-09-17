@@ -93,3 +93,6 @@ id_rsa.pub
 tfplan
 .terraform/
 *.backup
+
+# Local non-code artifacts
+Cloud mini Images/

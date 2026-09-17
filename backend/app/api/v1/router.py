@@ -1,7 +1,20 @@
-"""B-SEA — API v1 Router aggregation"""
+"""B-SEA -- API v1 Router aggregation"""
 from fastapi import APIRouter
 
-from app.api.v1 import auth, users, exams, questions, release, candidates, security, audit, incidents, dashboard, break_glass
+from app.api.v1 import (
+    auth,
+    users,
+    exams,
+    questions,
+    release,
+    candidates,
+    security,
+    audit,
+    incidents,
+    dashboard,
+    break_glass,
+    containment,
+)
 
 api_router = APIRouter()
 
@@ -16,3 +29,4 @@ api_router.include_router(audit.router, prefix="/audit", tags=["Audit"])
 api_router.include_router(incidents.router, prefix="/incidents", tags=["Incidents"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["Dashboard"])
 api_router.include_router(break_glass.router, prefix="/break-glass", tags=["Break-Glass"])
+api_router.include_router(containment.router, prefix="/containment", tags=["Containment"])
