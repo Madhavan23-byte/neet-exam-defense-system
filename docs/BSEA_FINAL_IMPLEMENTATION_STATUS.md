@@ -42,3 +42,8 @@
    - High-contrast, accessibility-compliant typography (Outfit, Inter, Newsreader, JetBrains Mono).
    - Real-time candidate CBT interface with calm countdown timer, dynamic section tabs, and standard bilingual options.
    - Full Administrative and Security Operations suite.
+
+## Official Production Deployment
+- **Live Vercel Production URL**: [https://neet-exam-defense-system.vercel.app](https://neet-exam-defense-system.vercel.app)
+- **Deployment Strategy**: Continuous Integration & Continuous Deployment (CI/CD) via Vercel Git Integration.
+- **Trigger**: Every push to the main branch of https://github.com/Madhavan23-byte/neet-exam-defense-system automatically triggers a zero-downtime production deployment.

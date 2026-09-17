@@ -7,7 +7,11 @@
 [![Regression Tests](https://img.shields.io/badge/Regression%20Suites-31%2F31%20Passed-blue.svg)](tests/security/test_phase3c5d_service_correlation.py)
 [![Frontend](https://img.shields.io/badge/Frontend-React%2019%20%7C%20Vite%208-violet.svg)](frontend/)
 [![Backend](https://img.shields.io/badge/Backend-FastAPI%20%7C%20PostgreSQL%2016-orange.svg)](backend/)
-[![Deployment](https://img.shields.io/badge/Deployment-Vercel%20Ready-black.svg)](frontend/vercel.json)
+[![Deployment](https://img.shields.io/badge/Deployment-Live%20on%20Vercel-success?logo=vercel)](https://neet-exam-defense-system.vercel.app)
+[![Production URL](https://img.shields.io/badge/Production-neet--exam--defense--system.vercel.app-blue)](https://neet-exam-defense-system.vercel.app)
+
+> 🌐 **Official Live Production Deployment**: [https://neet-exam-defense-system.vercel.app](https://neet-exam-defense-system.vercel.app)  
+> *Continuous Deployment is active. Every commit pushed to main automatically triggers an automated zero-downtime production deployment on Vercel.*
 
 ---
 

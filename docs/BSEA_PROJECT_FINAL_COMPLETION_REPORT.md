@@ -43,3 +43,8 @@ This project delivers the complete, authoritative security lifecycle:
 The system is fully tested, architecturally verified, zero-divergent, and ready for immediate deployment and operation.
 
 **Project Status**: **VERIFIED COMPLETE**.
+
+## Official Production Deployment
+- **Live Vercel Production URL**: [https://neet-exam-defense-system.vercel.app](https://neet-exam-defense-system.vercel.app)
+- **Deployment Strategy**: Continuous Integration & Continuous Deployment (CI/CD) via Vercel Git Integration.
+- **Trigger**: Every push to the main branch of https://github.com/Madhavan23-byte/neet-exam-defense-system automatically triggers a zero-downtime production deployment.
