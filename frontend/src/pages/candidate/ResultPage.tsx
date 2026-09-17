@@ -1,124 +1,158 @@
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { CheckCircle, Home, Shield, Clock } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import {
+  CheckCircle2, FileText, Printer, ArrowRight, Home, Shield,
+  Clock, Calendar, UserCheck
+} from 'lucide-react';
 import { useExamSessionStore } from '../../stores/examStore';
 import { candidateApi } from '../../services/api';
+import PortalHeader from '../../components/ui/PortalHeader';
+import PortalFooter from '../../components/ui/PortalFooter';
 
 export default function ResultPage() {
   const navigate = useNavigate();
   const { sessionToken, clearSession } = useExamSessionStore();
-  const [result, setResult] = useState<any>(null);
+
+  const [resultData, setResultData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     if (!sessionToken) {
-      setLoading(false);
+      navigate('/candidate/login');
       return;
     }
 
-    candidateApi
-      .getResult(sessionToken)
-      .then((res) => {
-        setResult(res.data);
+    const fetchResult = async () => {
+      setLoading(true);
+      try {
+        const res = await candidateApi.getResult(sessionToken);
+        setResultData(res.data);
+      } catch (err: any) {
+        setError(err?.response?.data?.detail || err.message || 'Error fetching submission details');
+      } finally {
         setLoading(false);
-      })
-      .catch((err) => {
-        console.error('Failed to fetch candidate result receipt:', err);
-        setError('Submission receipt stored. Real-time scores will be published following moderation.');
-        setLoading(false);
-      });
-  }, [sessionToken]);
+      }
+    };
 
-  const handleReturnHome = () => {
+    fetchResult();
+  }, [sessionToken, navigate]);
+
+  const handlePrint = () => {
+    window.print();
+  };
+
+  const handleExit = () => {
     clearSession();
     navigate('/');
   };
 
   return (
-    <div className="min-h-screen security-grid flex items-center justify-center p-6">
-      <div className="w-full max-w-lg card-elevated text-center py-10 px-8 animate-fade-in relative z-10 space-y-6">
-        <div className="w-16 h-16 rounded-full bg-emerald-500/20 flex items-center justify-center mx-auto">
-          <CheckCircle className="w-8 h-8 text-emerald-400" />
-        </div>
+    <div className="min-h-screen flex flex-col bg-[var(--gov-canvas)]">
+      <PortalHeader subtitle="Examination Submission Confirmation" />
 
-        <div>
-          <h1 className="text-2xl font-bold text-white mb-1">Examination Submitted</h1>
-          <p className="text-slate-400 text-sm">
-            Your examination responses have been securely locked and committed to the evaluation engine.
-          </p>
-        </div>
-
+      <main className="flex-1 max-w-3xl mx-auto px-4 py-10 w-full">
         {loading ? (
-          <div className="py-6 flex flex-col items-center justify-center text-slate-400 text-sm gap-2">
-            <Shield className="w-6 h-6 text-blue-400 animate-spin" />
-            <span>Verifying submission receipt and evaluation status...</span>
-          </div>
-        ) : result && result.result_available ? (
-          <div className="space-y-4">
-            {/* Score Highlight */}
-            <div className="p-4 rounded-xl bg-blue-950/30 border border-blue-900/40">
-              <div className="text-xs text-blue-400 font-semibold uppercase tracking-wider mb-1">
-                Score Summary Receipt
-              </div>
-              <div className="text-3xl font-extrabold text-white font-mono">
-                {result.total_score} <span className="text-lg text-slate-400 font-normal">/ {result.max_score}</span>
-              </div>
-              <div className="text-xs text-emerald-400 font-mono mt-1 font-semibold">
-                Score: {result.percentage}%
-              </div>
-            </div>
-
-            {/* Metric Cards */}
-            <div className="grid grid-cols-4 gap-2 text-center text-xs">
-              <div className="p-2.5 rounded-lg bg-slate-800/60 border border-slate-700">
-                <div className="font-bold text-white text-base font-mono">{result.attempted}</div>
-                <div className="text-slate-400 text-[10px] mt-0.5">Attempted</div>
-              </div>
-              <div className="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30">
-                <div className="font-bold text-emerald-400 text-base font-mono">{result.correct}</div>
-                <div className="text-slate-400 text-[10px] mt-0.5">Correct</div>
-              </div>
-              <div className="p-2.5 rounded-lg bg-red-500/10 border border-red-500/30">
-                <div className="font-bold text-red-400 text-base font-mono">{result.incorrect}</div>
-                <div className="text-slate-400 text-[10px] mt-0.5">Incorrect</div>
-              </div>
-              <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30">
-                <div className="font-bold text-amber-400 text-base font-mono">{result.skipped}</div>
-                <div className="text-slate-400 text-[10px] mt-0.5">Skipped</div>
-              </div>
-            </div>
-
-            {result.submitted_at && (
-              <div className="text-xs text-slate-500 flex items-center justify-center gap-1 font-mono">
-                <Clock className="w-3.5 h-3.5" />
-                Submitted: {new Date(result.submitted_at).toLocaleString()}
-              </div>
-            )}
+          <div className="py-20 text-center text-slate-500 text-xs">
+            Retrieving submission verification from server...
           </div>
         ) : error ? (
-          <div className="p-3 rounded-lg bg-slate-800/80 border border-slate-700 text-xs text-slate-300">
-            {error}
+          <div className="gov-card border-red-200 bg-red-50 text-red-700 text-xs p-5">
+            <h2 className="font-bold text-sm mb-1">Unable to load submission receipt</h2>
+            <p>{error}</p>
           </div>
         ) : (
-          <div className="p-4 rounded-lg bg-slate-900/60 border border-slate-800 text-xs text-slate-400">
-            Submission successfully acknowledged by central verification service.
+          <div className="space-y-6">
+            {/* Official Submission Slip Card */}
+            <div className="gov-card-elevated border-[var(--gov-border)]">
+              <div className="text-center pb-6 border-b border-[var(--gov-border)]">
+                <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center justify-center mx-auto mb-3">
+                  <CheckCircle2 className="w-6 h-6" />
+                </div>
+                <h1 className="text-xl font-bold text-[var(--gov-navy-dark)]">
+                  Examination Successfully Submitted
+                </h1>
+                <p className="text-xs text-slate-500 mt-1">
+                  Your examination session has been recorded and safely concluded on the secure server.
+                </p>
+              </div>
+
+              {/* Verified Fields (Constraint 3: strictly verified backend data) */}
+              <div className="py-6 space-y-3 text-xs border-b border-[var(--gov-border)]">
+                <div className="flex justify-between py-1 border-b border-stone-100">
+                  <span className="text-slate-500 font-semibold">Session Identifier:</span>
+                  <span className="font-mono text-slate-800 font-semibold">{resultData?.session_id || '—'}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-stone-100">
+                  <span className="text-slate-500 font-semibold">Candidate ID:</span>
+                  <span className="font-mono text-slate-800">{resultData?.candidate_id || '—'}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-stone-100">
+                  <span className="text-slate-500 font-semibold">Examination Code:</span>
+                  <span className="font-mono text-slate-800">{resultData?.exam_id || '—'}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-stone-100">
+                  <span className="text-slate-500 font-semibold">Session Status:</span>
+                  <span className="badge-secure">{resultData?.status || 'SUBMITTED'}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-stone-100">
+                  <span className="text-slate-500 font-semibold">Submission Timestamp:</span>
+                  <span className="font-mono text-slate-800">
+                    {resultData?.submitted_at
+                      ? new Date(resultData.submitted_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) + ' IST'
+                      : '—'}
+                  </span>
+                </div>
+
+                {resultData?.result_available && (
+                  <>
+                    <div className="flex justify-between py-1 border-b border-stone-100">
+                      <span className="text-slate-500 font-semibold">Questions Attempted:</span>
+                      <span className="font-bold text-slate-800">{resultData.attempted ?? '—'}</span>
+                    </div>
+                    {resultData.total_score !== undefined && (
+                      <div className="flex justify-between py-1 border-b border-stone-100">
+                        <span className="text-slate-500 font-semibold">Calculated Score:</span>
+                        <span className="font-bold text-emerald-800">
+                          {resultData.total_score} / {resultData.max_score || '—'}
+                        </span>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {/* Informative Guidance */}
+              <div className="pt-4 text-xs text-slate-600 space-y-2">
+                <p className="font-medium text-[var(--gov-navy-dark)]">Candidate Acknowledgement Notice:</p>
+                <p className="leading-relaxed">
+                  Please retain this acknowledgement confirmation for your records. Official scoring normalization and merit ranks will be announced following review by the Examination Directorate.
+                </p>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="mt-6 pt-4 border-t border-[var(--gov-border)] flex flex-wrap items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={handlePrint}
+                  className="btn btn-outline text-xs"
+                >
+                  <Printer className="w-3.5 h-3.5" /> Print Acknowledgement
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExit}
+                  className="btn btn-primary text-xs"
+                >
+                  <Home className="w-3.5 h-3.5" /> Exit to Homepage
+                </button>
+              </div>
+            </div>
           </div>
         )}
+      </main>
 
-        <div className="bg-slate-900/50 p-3 rounded-lg text-xs text-slate-500 border border-slate-800 flex items-center justify-center gap-2">
-          <Shield className="w-4 h-4 text-emerald-400 shrink-0" />
-          <span>The session cryptographic keys have been destroyed. This device can no longer access exam items.</span>
-        </div>
-
-        <button
-          className="btn btn-primary w-full flex items-center justify-center gap-2"
-          onClick={handleReturnHome}
-        >
-          <Home className="w-4 h-4" />
-          Return to Portal Home
-        </button>
-      </div>
+      <PortalFooter />
     </div>
   );
 }

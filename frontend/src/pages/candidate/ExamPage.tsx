@@ -1,96 +1,114 @@
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, Clock, AlertTriangle, CheckSquare, Flag, Send } from 'lucide-react';
+import {
+  Shield, Clock, AlertTriangle, CheckSquare, Flag, Send,
+  ChevronLeft, ChevronRight, CheckCircle2, RotateCcw, HelpCircle
+} from 'lucide-react';
 import { candidateApi } from '../../services/api';
 import { useExamSessionStore } from '../../stores/examStore';
+import CbtPalette, { type QuestionStatus } from '../../components/exam/CbtPalette';
+import ActionModal from '../../components/ui/ActionModal';
 
 export default function ExamPage() {
   const navigate = useNavigate();
-  const { sessionToken, totalQuestions, candidateName, watermarkId, expiresAt, clearSession } = useExamSessionStore();
+  const {
+    sessionToken,
+    totalQuestions: initialTotal,
+    candidateName,
+    watermarkId,
+    expiresAt,
+    clearSession,
+  } = useExamSessionStore();
 
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [totalQuestions, setTotalQuestions] = useState(initialTotal || 1);
   const [question, setQuestion] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
 
-  // Status maps for UI palette
-  const [statusMap, setStatusMap] = useState<Record<number, 'answered' | 'marked' | 'unanswered'>>({});
+  // Status map for palette
+  const [statusMap, setStatusMap] = useState<Record<number, QuestionStatus>>({});
+  // Dynamic subjects cache (Constraint 2: derived dynamically from actual questions)
+  const [subjectsMap, setSubjectsMap] = useState<Record<number, string>>({});
+  const [activeSubject, setActiveSubject] = useState<string>('');
 
-  // Security tracking
+  // Security violations & tab switches
   const [violations, setViolations] = useState(0);
   const [tabSwitches, setTabSwitches] = useState(0);
-  const [timeRemaining, setTimeRemaining] = useState('');
 
-  // Accessible Submission Confirmation Modal state
-  const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-
-  // Load question
-  const loadQuestion = useCallback(async (index: number) => {
-    if (!sessionToken) return;
-    setLoading(true);
-    try {
-      const res = await candidateApi.getQuestion(index, sessionToken);
-      setQuestion(res.data);
-      setCurrentIndex(index);
-      setError('');
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to load secure question');
-    } finally {
-      setLoading(false);
+  // Timer
+  const [timeLeftSec, setTimeLeftSec] = useState<number>(() => {
+    if (expiresAt) {
+      const ms = new Date(expiresAt).getTime() - Date.now();
+      return Math.max(0, Math.floor(ms / 1000));
     }
-  }, [sessionToken]);
+    return 180 * 60; // 3 hours fallback
+  });
 
-  // Initial load & setup
+  // Submission modal state
+  const [showSubmitModal, setShowSubmitModal] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Redirect if no session token
   useEffect(() => {
     if (!sessionToken) {
       navigate('/candidate/login');
-      return;
     }
+  }, [sessionToken, navigate]);
 
-    loadQuestion(0);
+  // Load question by index
+  const loadQuestion = useCallback(async (index: number) => {
+    if (!sessionToken) return;
+    setLoading(true);
+    setError('');
 
-    // Initial dummy array for map
-    const initialMap: Record<number, 'unanswered'> = {};
-    for (let i = 0; i < totalQuestions; i++) initialMap[i] = 'unanswered';
-    setStatusMap(initialMap);
-
-    // Enter fullscreen if possible (browser security might block it without user gesture,
-    // in real CBT this is handled by a dedicated lockdown browser)
-    const enterFullscreen = async () => {
-      try {
-        if (document.documentElement.requestFullscreen) {
-          await document.documentElement.requestFullscreen();
-        }
-      } catch (e) { /* ignore */ }
-    };
-    enterFullscreen();
-
-    // Prevent default actions
-    const preventDefault = (e: any) => e.preventDefault();
-    document.addEventListener('contextmenu', preventDefault);
-    document.addEventListener('copy', preventDefault);
-    document.addEventListener('paste', preventDefault);
-
-    return () => {
-      document.removeEventListener('contextmenu', preventDefault);
-      document.removeEventListener('copy', preventDefault);
-      document.removeEventListener('paste', preventDefault);
-      if (document.fullscreenElement) {
-        document.exitFullscreen().catch(() => {});
+    try {
+      const res = await candidateApi.getQuestion(index, sessionToken);
+      const data = res.data;
+      setQuestion(data);
+      if (data.total_questions) {
+        setTotalQuestions(data.total_questions);
       }
-    };
-  }, [sessionToken, navigate, loadQuestion, totalQuestions]);
 
-  // Security: Tab switch detection
+      // Record dynamic subject
+      const subj = data.subject || 'General Section';
+      setSubjectsMap((prev) => ({ ...prev, [index]: subj }));
+      if (!activeSubject) {
+        setActiveSubject(subj);
+      }
+
+      // Update palette status
+      setStatusMap((prev) => {
+        const current = prev[index];
+        if (!current || current === 'not-visited') {
+          return {
+            ...prev,
+            [index]: data.selected_option !== null && data.selected_option !== undefined
+              ? (data.is_marked_review ? 'marked-answered' : 'answered')
+              : 'not-answered',
+          };
+        }
+        return prev;
+      });
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || err.message || 'Error retrieving question');
+    } finally {
+      setLoading(false);
+    }
+  }, [sessionToken, activeSubject]);
+
+  useEffect(() => {
+    loadQuestion(currentIndex);
+  }, [currentIndex, loadQuestion]);
+
+  // Security monitoring: visibilitychange
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.hidden && sessionToken) {
-        setTabSwitches(prev => {
+        setTabSwitches((prev) => {
           const nw = prev + 1;
-          setViolations(v => v + 1);
-          candidateApi.reportEvent(sessionToken, 'TAB_SWITCH', { tabSwitches: nw });
+          candidateApi.reportEvent(sessionToken, 'TAB_SWITCH', { tabSwitches: nw }).catch(() => {});
           return nw;
         });
       }
@@ -99,378 +117,376 @@ export default function ExamPage() {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [sessionToken]);
 
-  // Heartbeat & Timer
+  // Heartbeat every 20 seconds
   useEffect(() => {
-    if (!sessionToken || !expiresAt) return;
+    if (!sessionToken) return;
     const interval = setInterval(() => {
-      // Timer update
-      const now = new Date().getTime();
-      const expiry = new Date(expiresAt).getTime();
-      const distance = expiry - now;
-
-      if (distance <= 0) {
-        setTimeRemaining('EXPIRED');
-        handleSubmitExam();
-        clearInterval(interval);
-        return;
-      }
-
-      const h = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-      const m = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
-      const s = Math.floor((distance % (1000 * 60)) / 1000);
-      setTimeRemaining(`${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`);
-
-      // Heartbeat send
       candidateApi.heartbeat(sessionToken, currentIndex, violations, tabSwitches).catch(() => {});
-    }, 1000);
-
+    }, 20000);
     return () => clearInterval(interval);
-  }, [sessionToken, expiresAt, currentIndex, violations, tabSwitches]);
+  }, [sessionToken, currentIndex, violations, tabSwitches]);
 
-  const handleOptionSelect = async (optIndex: number) => {
-    if (!sessionToken || !question) return;
+  // Timer countdown
+  useEffect(() => {
+    if (timeLeftSec <= 0) return;
+    const timer = setInterval(() => {
+      setTimeLeftSec((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [timeLeftSec]);
 
-    // Optimistic update
-    setQuestion({ ...question, selected_option: optIndex });
-    setStatusMap(prev => ({ ...prev, [currentIndex]: 'answered' }));
+  const formatTimer = (totalSec: number) => {
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  };
 
+  // Actions
+  const handleSelectOption = async (optIndex: number) => {
+    if (!question || !sessionToken) return;
+    setSaving(true);
     try {
-      await candidateApi.saveResponse(sessionToken, question.question_id, optIndex, question.is_marked_review);
-    } catch (e) {
-      console.error('Failed to save response');
+      await candidateApi.saveResponse(sessionToken, question.question_id, optIndex, question.is_marked_review || false);
+      setQuestion((prev: any) => ({ ...prev, selected_option: optIndex }));
+      setStatusMap((prev) => ({
+        ...prev,
+        [currentIndex]: prev[currentIndex] === 'marked' || prev[currentIndex] === 'marked-answered'
+          ? 'marked-answered'
+          : 'answered',
+      }));
+    } catch (err: any) {
+      console.error('Failed to save response:', err);
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleClearResponse = async () => {
-    if (!sessionToken || !question) return;
-    setQuestion({ ...question, selected_option: null });
-    setStatusMap(prev => ({ ...prev, [currentIndex]: question.is_marked_review ? 'marked' : 'unanswered' }));
+    if (!question || !sessionToken) return;
+    setSaving(true);
     try {
-      await candidateApi.saveResponse(sessionToken, question.question_id, null, question.is_marked_review);
-    } catch (e) { }
+      await candidateApi.saveResponse(sessionToken, question.question_id, null, question.is_marked_review || false);
+      setQuestion((prev: any) => ({ ...prev, selected_option: null }));
+      setStatusMap((prev) => ({
+        ...prev,
+        [currentIndex]: prev[currentIndex] === 'marked-answered' || prev[currentIndex] === 'marked'
+          ? 'marked'
+          : 'not-answered',
+      }));
+    } catch (err: any) {
+      console.error('Failed to clear response:', err);
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleMarkReview = async () => {
-    if (!sessionToken || !question) return;
+  const handleToggleMarkReview = async () => {
+    if (!question || !sessionToken) return;
     const newVal = !question.is_marked_review;
-    setQuestion({ ...question, is_marked_review: newVal });
-
-    if (newVal) {
-      setStatusMap(prev => ({ ...prev, [currentIndex]: 'marked' }));
-    } else {
-      setStatusMap(prev => ({ ...prev, [currentIndex]: question.selected_option !== null ? 'answered' : 'unanswered' }));
-    }
-
+    setSaving(true);
     try {
       await candidateApi.saveResponse(sessionToken, question.question_id, question.selected_option, newVal);
-    } catch (e) { }
+      setQuestion((prev: any) => ({ ...prev, is_marked_review: newVal }));
+      setStatusMap((prev) => {
+        const hasAnswer = question.selected_option !== null && question.selected_option !== undefined;
+        if (newVal) {
+          return { ...prev, [currentIndex]: hasAnswer ? 'marked-answered' : 'marked' };
+        } else {
+          return { ...prev, [currentIndex]: hasAnswer ? 'answered' : 'not-answered' };
+        }
+      });
+    } catch (err: any) {
+      console.error('Failed to toggle review flag:', err);
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleSubmitExam = () => {
+  const handleNext = () => {
+    if (currentIndex < totalQuestions - 1) {
+      setCurrentIndex(currentIndex + 1);
+    }
+  };
+
+  const handlePrev = () => {
+    if (currentIndex > 0) {
+      setCurrentIndex(currentIndex - 1);
+    }
+  };
+
+  const handleSubmitExam = async () => {
     if (!sessionToken) return;
-    setSubmitError(null);
-    setShowConfirmModal(true);
-  };
-
-  const handleCloseSubmitModal = () => {
-    if (isSubmitting) return;
-    setShowConfirmModal(false);
-    setSubmitError(null);
-  };
-
-  const handleConfirmFinalSubmit = async () => {
-    if (!sessionToken || isSubmitting) return;
-    setIsSubmitting(true);
-    setSubmitError(null);
+    setSubmitting(true);
     try {
       await candidateApi.submit(sessionToken);
       navigate('/candidate/result');
-    } catch (e: any) {
-      setIsSubmitting(false);
-      const detail = e?.response?.data?.detail || 'Failed to submit exam. Please try again or contact invigilator.';
-      setSubmitError(detail);
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || 'Failed to submit exam');
+      setSubmitting(false);
     }
   };
 
-  if (!sessionToken) return null;
+  // Extract unique dynamic subjects
+  const availableSubjects = Array.from(new Set(Object.values(subjectsMap)));
 
   return (
-    <div className="exam-fullscreen flex flex-col">
-      {/* Background forensic watermark layer */}
-      <div className="exam-watermark">
-        {watermarkId} • {candidateName?.toUpperCase()} • B-SEA SECURE • {watermarkId}
-      </div>
-
-      {/* Header */}
-      <header className="relative z-10 bg-slate-900 border-b border-blue-900/30 px-6 py-3 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-4">
-          <div className="w-8 h-8 rounded bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center">
-            <Shield className="w-4 h-4 text-white" />
-          </div>
-          <div>
-            <div className="text-white font-bold text-sm">B-SEA CBT Terminal</div>
-            <div className="text-xs text-blue-400 font-mono">{candidateName} • {watermarkId}</div>
-          </div>
+    <div className="min-h-screen flex flex-col bg-[var(--gov-canvas)] relative select-none">
+      {/* Subtle Forensic Watermark Overlay */}
+      {watermarkId && (
+        <div className="pointer-events-none fixed inset-0 z-0 opacity-4 overflow-hidden flex flex-wrap gap-24 p-12 text-slate-900 font-mono text-xs">
+          {Array.from({ length: 16 }).map((_, i) => (
+            <div key={i} className="transform -rotate-12">
+              {watermarkId} • {candidateName || 'Candidate'}
+            </div>
+          ))}
         </div>
+      )}
 
-        {tabSwitches > 0 && (
-          <div className="flex items-center gap-2 px-3 py-1 rounded bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-bold animate-pulse">
-            <AlertTriangle className="w-4 h-4" />
-            SECURITY WARNING: TAB SWITCH DETECTED ({tabSwitches})
-          </div>
-        )}
-
-        <div className="flex items-center gap-6">
-          <div className="text-right">
-            <div className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Time Remaining</div>
-            <div className={`text-xl font-bold font-mono ${timeRemaining === 'EXPIRED' ? 'text-red-500 animate-pulse' : 'text-emerald-400'}`}>
-              {timeRemaining || '--:--:--'}
+      {/* CBT Header */}
+      <header className="border-b border-[var(--gov-border)] bg-[var(--gov-surface)] px-4 py-3 sticky top-0 z-30 shadow-xs">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-[var(--gov-navy)] text-amber-400 flex items-center justify-center font-bold text-sm">
+              <Shield className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="text-sm font-bold text-[var(--gov-navy-dark)]">
+                B-SEA Computer-Based Test
+              </div>
+              <div className="text-xs text-slate-500 font-medium">
+                Candidate: <span className="text-slate-800 font-semibold">{candidateName || 'Authorized Candidate'}</span>
+              </div>
             </div>
           </div>
-          <button className="btn btn-danger text-sm" onClick={handleSubmitExam}>
-            Submit Exam
-          </button>
+
+          <div className="flex items-center gap-4">
+            {/* Countdown Timer with Empathetic Calm Styling */}
+            <div className={`px-3.5 py-1.5 rounded-lg border font-mono font-bold text-sm flex items-center gap-2 ${
+              timeLeftSec < 900
+                ? 'bg-amber-500/15 text-amber-900 border-amber-500/40 animate-pulse'
+                : 'bg-[var(--gov-surface-warm)] text-[var(--gov-navy-dark)] border-[var(--gov-border)]'
+            }`}>
+              <Clock className="w-4 h-4 text-amber-600" />
+              <span>Time Left: {formatTimer(timeLeftSec)}</span>
+            </div>
+
+            <button
+              onClick={() => setShowSubmitModal(true)}
+              className="btn btn-primary text-xs py-2 px-4 shadow-xs"
+            >
+              <Send className="w-3.5 h-3.5" /> Submit Examination
+            </button>
+          </div>
         </div>
       </header>
 
-      {/* Main Content */}
-      <div className="flex-1 flex overflow-hidden relative z-10">
-        {/* Left: Question Area */}
-        <div className="flex-1 flex flex-col p-6 overflow-y-auto">
-          {error ? (
-            <div className="card-elevated border-red-500/30 bg-red-500/10 text-center py-12">
-              <AlertTriangle className="w-12 h-12 text-red-400 mx-auto mb-4" />
-              <div className="text-red-400 font-bold mb-2">Secure Decryption Failed</div>
-              <div className="text-slate-400 text-sm">{error}</div>
-              <button className="btn btn-primary mt-6" onClick={() => loadQuestion(currentIndex)}>Retry</button>
-            </div>
-          ) : loading || !question ? (
-            <div className="flex-1 flex flex-col items-center justify-center text-slate-500">
-              <Shield className="w-12 h-12 text-blue-500/30 animate-pulse-secure mb-4" />
-              <div>Decrypting secure question object...</div>
-              <div className="text-xs font-mono mt-2 text-slate-600">AES-256-GCM</div>
-            </div>
-          ) : (
-            <div className="flex-1 flex flex-col max-w-4xl mx-auto w-full">
-              {/* Question Header */}
-              <div className="flex items-center justify-between border-b border-slate-800 pb-4 mb-6">
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-lg bg-blue-900/30 text-blue-400 flex items-center justify-center font-bold text-lg">
-                    Q{currentIndex + 1}
-                  </div>
-                  <div>
-                    <div className="badge-info text-xs">{question.subject}</div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-slate-500 font-mono">ID: {question.question_id.slice(0, 8)}</span>
-                </div>
-              </div>
-
-              {/* Question Content */}
-              <div className="text-lg text-white mb-8 leading-relaxed font-medium">
-                {question.content?.text}
-              </div>
-
-              {/* Options */}
-              <div className="space-y-3 mb-8 flex-1">
-                {(question.content?.options || []).map((optText: string, i: number) => {
-                  const isSelected = question.selected_option === i;
-                  return (
-                    <div
-                      key={i}
-                      className={`question-option ${isSelected ? 'selected' : ''}`}
-                      onClick={() => handleOptionSelect(i)}
-                    >
-                      <div className={`w-6 h-6 rounded-full border flex items-center justify-center shrink-0 mt-0.5 text-xs font-bold transition-colors ${
-                        isSelected ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-600 text-slate-400'
-                      }`}>
-                        {String.fromCharCode(65 + i)}
-                      </div>
-                      <div className={isSelected ? 'text-blue-100 font-medium' : 'text-slate-300'}>
-                        {optText}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Bottom Actions */}
-              <div className="flex items-center justify-between border-t border-slate-800 pt-6">
-                <div className="flex gap-3">
-                  <button className="btn btn-ghost text-sm" onClick={handleClearResponse} disabled={question.selected_option === null}>
-                    Clear Response
-                  </button>
-                  <button
-                    className={`btn text-sm ${question.is_marked_review ? 'btn-ghost border-amber-500/50 text-amber-400' : 'btn-ghost'}`}
-                    onClick={handleMarkReview}
-                  >
-                    <Flag className="w-4 h-4" />
-                    {question.is_marked_review ? 'Unmark for Review' : 'Mark for Review'}
-                  </button>
-                </div>
-                <div className="flex gap-3">
-                  <button
-                    className="btn btn-primary"
-                    onClick={() => {
-                      if (currentIndex < totalQuestions - 1) loadQuestion(currentIndex + 1);
-                    }}
-                    disabled={currentIndex === totalQuestions - 1}
-                  >
-                    Save & Next →
-                  </button>
-                </div>
-              </div>
+      {/* CBT Main Layout */}
+      <main className="flex-1 max-w-7xl mx-auto w-full px-4 py-4 grid grid-cols-1 lg:grid-cols-12 gap-5 relative z-10">
+        {/* Question Area (8 cols) */}
+        <div className="lg:col-span-8 flex flex-col gap-4">
+          {/* Dynamic Subject Bar (Constraint 2) */}
+          {availableSubjects.length > 0 && (
+            <div className="flex items-center gap-2 border-b border-[var(--gov-border)] pb-2 overflow-x-auto">
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider mr-1">Section:</span>
+              {availableSubjects.map((subj) => (
+                <button
+                  key={subj}
+                  type="button"
+                  onClick={() => setActiveSubject(subj)}
+                  className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+                    activeSubject === subj
+                      ? 'bg-[var(--gov-navy)] text-white'
+                      : 'bg-white text-slate-600 border border-[var(--gov-border)] hover:bg-slate-50'
+                  }`}
+                >
+                  {subj}
+                </button>
+              ))}
             </div>
           )}
-        </div>
 
-        {/* Right: Navigation Palette */}
-        <div className="w-80 bg-slate-900 border-l border-blue-900/30 flex flex-col shrink-0">
-          <div className="p-4 border-b border-blue-900/20">
-            <h3 className="font-bold text-white text-sm mb-3">Question Palette</h3>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded bg-emerald-500/20 border border-emerald-500" /> Answered
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded bg-amber-500/20 border border-amber-500" /> Marked
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded bg-slate-800 border border-slate-600" /> Unanswered
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded bg-blue-500/20 border border-blue-500" /> Current
-              </div>
-            </div>
-          </div>
-          <div className="p-4 flex-1 overflow-y-auto">
-            <div className="flex flex-wrap gap-2">
-              {Array.from({ length: totalQuestions }).map((_, i) => {
-                const status = statusMap[i];
-                let className = 'question-nav-btn ';
-                if (i === currentIndex) className += 'current';
-                else if (status === 'answered') className += 'answered';
-                else if (status === 'marked') className += 'marked';
-
-                return (
-                  <button
-                    key={i}
-                    className={className}
-                    onClick={() => loadQuestion(i)}
-                  >
-                    {i + 1}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-          <div className="p-4 border-t border-blue-900/20 bg-slate-950">
-            <div className="text-xs text-slate-500 flex items-center justify-center gap-2">
-              <Shield className="w-3.5 h-3.5" />
-              Connection Secure
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Accessible Submission Confirmation Modal */}
-      {showConfirmModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="submit-modal-title"
-          onKeyDown={(e) => {
-            if (e.key === 'Escape' && !isSubmitting) handleCloseSubmitModal();
-          }}
-          tabIndex={-1}
-        >
-          <div className="w-full max-w-lg card-elevated border-red-500/30 p-6 space-y-6 shadow-2xl relative">
-            <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
-              <div className="w-10 h-10 rounded-lg bg-red-500/20 text-red-400 flex items-center justify-center shrink-0">
-                <AlertTriangle className="w-6 h-6" />
-              </div>
-              <div>
-                <h3 id="submit-modal-title" className="text-lg font-bold text-white">
-                  Confirm Examination Submission
-                </h3>
-                <p className="text-xs text-slate-400">
-                  Please review your question response status before finalizing.
-                </p>
-              </div>
-            </div>
-
-            {/* Question status summary cards */}
-            <div className="grid grid-cols-3 gap-3 text-center">
-              <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30">
-                <div className="text-2xl font-bold text-emerald-400 font-mono">
-                  {Object.values(statusMap).filter((s) => s === 'answered').length}
+          {/* Question Card */}
+          <div className="gov-card flex-1 flex flex-col justify-between min-h-[460px]">
+            <div>
+              {/* Question Header */}
+              <div className="flex items-center justify-between pb-3 border-b border-[var(--gov-border)] mb-4">
+                <div className="text-xs font-bold text-[var(--gov-navy)] uppercase tracking-wider">
+                  Question {currentIndex + 1} of {totalQuestions}
                 </div>
-                <div className="text-xs text-slate-400 mt-1 font-medium">Answered</div>
-              </div>
-              <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
-                <div className="text-2xl font-bold text-amber-400 font-mono">
-                  {Object.values(statusMap).filter((s) => s === 'marked').length}
+                <div className="flex items-center gap-2 text-xs">
+                  {saving && <span className="text-slate-400 italic">Saving response...</span>}
+                  <span className="badge-info">{question?.subject || 'Standard'}</span>
                 </div>
-                <div className="text-xs text-slate-400 mt-1 font-medium">Marked for Review</div>
               </div>
-              <div className="p-3 rounded-lg bg-slate-800/60 border border-slate-700">
-                <div className="text-2xl font-bold text-slate-300 font-mono">
-                  {Math.max(
-                    0,
-                    totalQuestions -
-                      Object.values(statusMap).filter((s) => s === 'answered').length -
-                      Object.values(statusMap).filter((s) => s === 'marked').length
-                  )}
+
+              {loading ? (
+                <div className="py-20 text-center text-slate-400 text-xs">
+                  Decrypting question securely from KMS...
                 </div>
-                <div className="text-xs text-slate-400 mt-1 font-medium">Unanswered</div>
-              </div>
+              ) : error ? (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-xs">
+                  {error}
+                </div>
+              ) : question ? (
+                <div>
+                  <div className="text-sm sm:text-base font-semibold text-[var(--gov-navy-dark)] leading-relaxed mb-6 whitespace-pre-wrap">
+                    {question.content?.question_text || question.content?.text || 'Question text not available.'}
+                  </div>
+
+                  {/* Options List */}
+                  <div className="space-y-3">
+                    {question.content?.options &&
+                      question.content.options.map((optionText: string, optIdx: number) => {
+                        const isSelected = question.selected_option === optIdx;
+                        return (
+                          <label
+                            key={optIdx}
+                            onClick={() => handleSelectOption(optIdx)}
+                            className={`flex items-start gap-3.5 p-3.5 rounded-lg border text-xs sm:text-sm cursor-pointer transition-all ${
+                              isSelected
+                                ? 'bg-amber-500/10 border-amber-600/60 shadow-xs font-semibold text-[var(--gov-navy-dark)]'
+                                : 'bg-[var(--gov-surface)] border-[var(--gov-border)] hover:bg-slate-50 text-slate-700'
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="question-option"
+                              checked={isSelected}
+                              onChange={() => {}}
+                              className="mt-0.5 accent-amber-600"
+                            />
+                            <span className="w-5 font-bold text-slate-500">{String.fromCharCode(65 + optIdx)}.</span>
+                            <span className="flex-1">{optionText}</span>
+                          </label>
+                        );
+                      })}
+                  </div>
+                </div>
+              ) : null}
             </div>
 
-            <div className="p-4 rounded-lg bg-red-950/30 border border-red-900/40 text-xs text-red-300 space-y-2">
-              <div className="font-bold flex items-center gap-2 text-red-400">
-                <Shield className="w-4 h-4" /> Irreversible Final Submission
+            {/* Question Bottom Action Toolbar */}
+            <div className="pt-5 mt-6 border-t border-[var(--gov-border)] flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleToggleMarkReview}
+                  className={`btn text-xs py-1.5 px-3 ${
+                    question?.is_marked_review ? 'btn-amber' : 'btn-outline text-slate-600'
+                  }`}
+                  disabled={loading}
+                >
+                  <Flag className="w-3.5 h-3.5" />
+                  {question?.is_marked_review ? 'Marked for Review' : 'Mark for Review'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearResponse}
+                  className="btn btn-ghost text-xs py-1.5 px-2.5 text-slate-500"
+                  disabled={loading || question?.selected_option === null || question?.selected_option === undefined}
+                >
+                  <RotateCcw className="w-3.5 h-3.5" /> Clear Response
+                </button>
               </div>
-              <p>
-                Once submitted, all responses will be locked and evaluated. Your ephemeral session keys will be purged from this device. You will not be able to return to this examination.
-              </p>
-            </div>
 
-            {submitError && (
-              <div className="p-3 rounded-lg bg-red-500/20 border border-red-500/40 text-xs text-red-200 font-medium">
-                {submitError}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handlePrev}
+                  className="btn btn-outline text-xs py-1.5 px-3"
+                  disabled={currentIndex === 0 || loading}
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" /> Previous
+                </button>
+                <button
+                  type="button"
+                  onClick={handleNext}
+                  className="btn btn-navy text-xs py-1.5 px-4"
+                  disabled={currentIndex >= totalQuestions - 1 || loading}
+                >
+                  Next <ChevronRight className="w-3.5 h-3.5" />
+                </button>
               </div>
-            )}
-
-            <div className="flex items-center justify-end gap-3 pt-2">
-              <button
-                type="button"
-                className="btn btn-ghost text-sm"
-                onClick={handleCloseSubmitModal}
-                disabled={isSubmitting}
-              >
-                Cancel / Return to Exam
-              </button>
-              <button
-                type="button"
-                className="btn btn-danger text-sm font-semibold flex items-center gap-2"
-                onClick={handleConfirmFinalSubmit}
-                disabled={isSubmitting}
-                autoFocus
-              >
-                {isSubmitting ? (
-                  <>
-                    <Shield className="w-4 h-4 animate-spin" /> Submitting...
-                  </>
-                ) : (
-                  'Confirm & Submit Exam'
-                )}
-              </button>
             </div>
           </div>
         </div>
-      )}
+
+        {/* Question Palette Sidebar (4 cols) */}
+        <div className="lg:col-span-4 flex flex-col">
+          <CbtPalette
+            totalQuestions={totalQuestions}
+            currentIndex={currentIndex}
+            statusMap={statusMap}
+            onSelectIndex={(idx) => setCurrentIndex(idx)}
+          />
+        </div>
+      </main>
+
+      {/* Submission Confirmation Modal */}
+      <ActionModal
+        isOpen={showSubmitModal}
+        onClose={() => setShowSubmitModal(false)}
+        title="Confirm Examination Submission"
+        subtitle="Please review your attempt status before concluding the exam."
+        maxWidth="max-w-md"
+      >
+        <div className="space-y-4 text-xs">
+          <div className="p-3 bg-[var(--gov-surface-warm)] rounded-lg border border-[var(--gov-border)] space-y-2">
+            <div className="flex justify-between">
+              <span className="text-slate-500 font-semibold">Total Questions:</span>
+              <span className="font-bold text-slate-800">{totalQuestions}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-500 font-semibold">Answered:</span>
+              <span className="font-bold text-emerald-700">
+                {Object.values(statusMap).filter((s) => s === 'answered' || s === 'marked-answered').length}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-500 font-semibold">Marked for Review:</span>
+              <span className="font-bold text-purple-700">
+                {Object.values(statusMap).filter((s) => s === 'marked' || s === 'marked-answered').length}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-500 font-semibold">Not Answered:</span>
+              <span className="font-bold text-amber-700">
+                {totalQuestions - Object.values(statusMap).filter((s) => s === 'answered' || s === 'marked-answered').length}
+              </span>
+            </div>
+          </div>
+
+          <p className="text-slate-600 leading-relaxed">
+            Once submitted, your responses will be cryptographically locked and evaluated. You cannot re-enter this examination session.
+          </p>
+
+          <div className="pt-2 flex justify-end gap-3">
+            <button
+              type="button"
+              className="btn btn-outline text-xs"
+              onClick={() => setShowSubmitModal(false)}
+              disabled={submitting}
+            >
+              Return to Test
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary text-xs"
+              onClick={handleSubmitExam}
+              disabled={submitting}
+            >
+              {submitting ? 'Submitting Responses...' : 'Confirm Final Submission'}
+            </button>
+          </div>
+        </div>
+      </ActionModal>
     </div>
   );
 }

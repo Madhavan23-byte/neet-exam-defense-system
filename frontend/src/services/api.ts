@@ -58,41 +58,8 @@ export const examsApi = {
 export const questionsApi = {
   list: (examId: string) => api.get(`/questions/exam/${examId}`),
   getDetail: (id: string, grantId?: string) =>
-    api.get(`/questions/${id}${grantId ? `?grant_id=${encodeURIComponent(grantId)}` : ''}`, {
-      headers: grantId ? { 'X-Access-Grant-ID': grantId } : {},
-    }),
-  requestAccessGrant: (questionId: string, operation: string = 'VIEW', purpose?: string, expiresInMinutes: number = 30) =>
-    api.post(`/questions/${questionId}/access-grant`, {
-      operation,
-      purpose,
-      expires_in_minutes: expiresInMinutes,
-    }),
-  revokeAccessGrant: (grantId: string, reason?: string) =>
-    api.post(`/questions/grants/${grantId}/revoke`, { reason: reason || 'User action' }),
-  getMyAssignments: (examId?: string) =>
-    api.get('/questions/assignments/me' + (examId ? `?exam_id=${encodeURIComponent(examId)}` : '')),
-  create: (data: any) => api.post('/questions/', data),
-  submit: (id: string) => api.post(`/questions/${id}/submit`),
-  startReview: (assignmentId: string, grantId?: string) =>
-    api.post(`/questions/assignments/${assignmentId}/start`, { grant_id: grantId }, {
-      headers: grantId ? { 'X-Access-Grant-ID': grantId } : {},
-    }),
-  submitReview: (questionId: string, assignmentId: string, verdict: string, comments?: string, grantId?: string) =>
-    api.post(
-      `/questions/${questionId}/review`,
-      { assignment_id: assignmentId, verdict, comments, grant_id: grantId },
-      { headers: grantId ? { 'X-Access-Grant-ID': grantId } : {} }
-    ),
-  approve: (id: string, comments: string, grantId?: string) =>
-    api.post(
-      `/questions/${id}/approve`,
-      { verdict: 'APPROVED', comments, grant_id: grantId },
-      { headers: grantId ? { 'X-Access-Grant-ID': grantId } : {} }
-    ),
-  reject: (id: string, comments: string, grantId?: string) =>
-    api.post(
-      `/questions/${id}/reject`,
-      { verdict: 'REJECTED', comments, grant_id: grantId },
+    api.get(
+      `/questions/${id}${grantId ? `?grant_id=${encodeURIComponent(grantId)}` : ''}`,
       { headers: grantId ? { 'X-Access-Grant-ID': grantId } : {} }
     ),
   shard: (examId: string, data: any) => api.post(`/questions/exam/${examId}/shard`, data),
@@ -151,6 +118,53 @@ export const incidentsApi = {
   create: (data: any) => api.post('/incidents/', data),
   executeAction: (id: string, action: string, target_id: string, reason: string) =>
     api.post(`/incidents/${id}/action`, { action, target_id, reason }),
+};
+
+// ── Containment (Phase 3C-5E) ─────────────────────────────────────────────────
+export interface ContainmentRequestPayload {
+  action_type: string;
+  incident_id: string;
+  target_dict: Record<string, any>;
+  justification: string;
+  policy_version?: string;
+  target_scope_hash?: string;
+}
+
+export interface ContainmentAuthorizePayload {
+  auth_nonce: string;
+  decision?: string;
+}
+
+export interface ContainmentExecutePayload {
+  target_dict: Record<string, any>;
+  execution_nonce?: string;
+}
+
+export interface BreakGlassIssuePayload {
+  action_type: string;
+  incident_id: string;
+  target_dict: Record<string, any>;
+  fido2_assertion_payload: string;
+  justification?: string;
+}
+
+export const containmentApi = {
+  createRequest: (data: ContainmentRequestPayload) =>
+    api.post('/containment/requests', data),
+  authorizeRequest: (requestId: string, data: ContainmentAuthorizePayload) =>
+    api.post(`/containment/requests/${requestId}/authorize`, data),
+  executeRequest: (requestId: string, data: ContainmentExecutePayload) =>
+    api.post(`/containment/requests/${requestId}/execute`, data),
+  getRequest: (requestId: string) =>
+    api.get(`/containment/requests/${requestId}`),
+  issueBreakGlass: (data: BreakGlassIssuePayload) =>
+    api.post('/containment/break-glass/issue', data),
+  executeBreakGlass: (data: { token_id: string; action_type: string; incident_id: string; target_dict: Record<string, any> }) =>
+    api.post('/containment/break-glass/execute', data),
+  reconcile: () =>
+    api.post('/containment/reconcile'),
+  attest: (data: { target_urn: string; attestation_note: string }) =>
+    api.post('/containment/attest', data),
 };
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────

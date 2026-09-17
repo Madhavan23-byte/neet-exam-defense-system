@@ -1,176 +1,214 @@
+import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { useState } from 'react';
-import { FileText, Plus, ChevronRight, Lock, Shield, Calendar } from 'lucide-react';
+import { FileText, Plus, ChevronRight, Lock, Shield, Calendar, AlertCircle } from 'lucide-react';
 import { examsApi } from '../../services/api';
-
-const STATUS_BADGE: Record<string, string> = {
-  DRAFT: 'badge-info',
-  BLUEPRINT_CREATED: 'badge-purple',
-  FORMS_GENERATED: 'badge-purple',
-  THRESHOLD_PENDING: 'badge-warning',
-  THRESHOLD_APPROVED: 'badge-purple',
-  RELEASED: 'badge-secure',
-  ONGOING: 'badge-secure',
-  COMPLETED: 'badge-info',
-  FROZEN: 'badge-critical',
-};
-
-function CreateExamModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const [form, setForm] = useState({
-    title: '',
-    description: '',
-    exam_type: 'CBT',
-    security_mode: 'HIGH',
-    scheduled_start_utc: '',
-    duration_minutes: 180,
-    required_approvals: 3,
-  });
-
-  const mutation = useMutation({
-    mutationFn: () => examsApi.create(form),
-    onSuccess: () => { onCreated(); onClose(); },
-  });
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-lg card-elevated animate-fade-in">
-        <h2 className="text-lg font-bold text-white mb-5">Create New Exam</h2>
-        <div className="space-y-4">
-          <div>
-            <label className="form-label">Exam Title</label>
-            <input className="form-input" placeholder="e.g. BSEA National Certification 2026"
-              value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} />
-          </div>
-          <div>
-            <label className="form-label">Description</label>
-            <textarea className="form-input" rows={2} placeholder="Exam description..."
-              value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="form-label">Security Mode</label>
-              <select className="form-input" value={form.security_mode}
-                onChange={e => setForm({ ...form, security_mode: e.target.value })}>
-                <option value="STANDARD">STANDARD</option>
-                <option value="HIGH">HIGH</option>
-                <option value="CRITICAL">CRITICAL</option>
-              </select>
-            </div>
-            <div>
-              <label className="form-label">Required Approvals</label>
-              <select className="form-input" value={form.required_approvals}
-                onChange={e => setForm({ ...form, required_approvals: Number(e.target.value) })}>
-                <option value={1}>1</option>
-                <option value={2}>2</option>
-                <option value={3}>3</option>
-                <option value={5}>5</option>
-              </select>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="form-label">Scheduled Start (UTC)</label>
-              <input type="datetime-local" className="form-input"
-                onChange={e => setForm({ ...form, scheduled_start_utc: new Date(e.target.value).toISOString() })} />
-            </div>
-            <div>
-              <label className="form-label">Duration (minutes)</label>
-              <input type="number" className="form-input" value={form.duration_minutes}
-                onChange={e => setForm({ ...form, duration_minutes: Number(e.target.value) })} />
-            </div>
-          </div>
-        </div>
-        <div className="flex gap-3 mt-6">
-          <button className="btn btn-primary flex-1 justify-center"
-            onClick={() => mutation.mutate()} disabled={!form.title || mutation.isPending}>
-            {mutation.isPending ? 'Creating...' : 'Create Exam'}
-          </button>
-          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        </div>
-        {mutation.isError && (
-          <div className="mt-3 text-xs text-red-400">
-            Failed to create exam. Check your permissions.
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+import StatusBadge from '../../components/ui/StatusBadge';
+import ActionModal from '../../components/ui/ActionModal';
+import EmptyState from '../../components/ui/EmptyState';
 
 export default function ExamsPage() {
-  const qc = useQueryClient();
-  const [showCreate, setShowCreate] = useState(false);
+  const queryClient = useQueryClient();
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newTitle, setNewTitle] = useState('');
+  const [newType, setNewType] = useState('CBT');
+  const [newSecMode, setNewSecMode] = useState('STANDARD');
+  const [newDuration, setNewDuration] = useState('180');
+  const [error, setError] = useState('');
 
   const { data: exams = [], isLoading } = useQuery({
-    queryKey: ['exams'],
-    queryFn: () => examsApi.list().then(r => r.data),
-    refetchInterval: 15000,
+    queryKey: ['exams-list'],
+    queryFn: () => examsApi.list().then((r) => r.data || []),
   });
 
+  const createMutation = useMutation({
+    mutationFn: (data: any) => examsApi.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['exams-list'] });
+      setShowCreateModal(false);
+      setNewTitle('');
+      setError('');
+    },
+    onError: (err: any) => {
+      setError(err?.response?.data?.detail || err.message || 'Failed to create exam');
+    },
+  });
+
+  const handleCreate = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTitle.trim()) return;
+    createMutation.mutate({
+      title: newTitle,
+      exam_type: newType,
+      security_mode: newSecMode,
+      duration_minutes: parseInt(newDuration, 10) || 180,
+    });
+  };
+
   return (
-    <div className="p-8">
-      <div className="flex items-center justify-between mb-8">
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="gov-card-warm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white">Examinations</h1>
-          <p className="text-slate-400 text-sm mt-1">Manage exam lifecycle, blueprints, and release control</p>
+          <h1 className="text-xl font-bold text-[var(--gov-navy-dark)]">
+            Examination Administration
+          </h1>
+          <p className="text-xs text-slate-500 mt-1">
+            Configure examination blueprints, generate randomized candidate forms, and track release status
+          </p>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowCreate(true)}>
-          <Plus className="w-4 h-4" /> Create Exam
+        <button
+          onClick={() => setShowCreateModal(true)}
+          className="btn btn-navy text-xs"
+        >
+          <Plus className="w-4 h-4" /> Create Examination
         </button>
       </div>
 
-      {isLoading ? (
-        <div className="text-slate-500">Loading exams...</div>
-      ) : (
-        <div className="space-y-3">
-          {exams.map((exam: any) => (
-            <Link
-              key={exam.id}
-              to={`/admin/exams/${exam.id}`}
-              className="card flex items-center justify-between hover:border-blue-500/30 hover:bg-blue-950/10 transition-all group"
-            >
-              <div className="flex items-center gap-4">
-                <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center">
-                  <FileText className="w-5 h-5 text-blue-400" />
-                </div>
-                <div>
-                  <div className="font-semibold text-white group-hover:text-blue-300 transition-colors">{exam.title}</div>
-                  <div className="flex items-center gap-3 mt-1">
-                    <span className={STATUS_BADGE[exam.status] || 'badge-info'}>{exam.status}</span>
-                    <span className="badge-warning text-xs">{exam.security_mode}</span>
-                    {exam.release_frozen && <span className="badge-critical text-xs">FROZEN</span>}
-                    {exam.scheduled_start_utc && (
-                      <span className="text-xs text-slate-500 flex items-center gap-1">
-                        <Calendar className="w-3 h-3" />
-                        {new Date(exam.scheduled_start_utc).toLocaleDateString('en-IN')}
-                      </span>
-                    )}
-                    <span className="text-xs text-slate-600 font-mono">
-                      {exam.required_approvals}-of-N threshold
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <ChevronRight className="w-4 h-4 text-slate-600 group-hover:text-blue-400 transition-colors" />
-            </Link>
-          ))}
-          {exams.length === 0 && (
-            <div className="card text-center py-12">
-              <FileText className="w-12 h-12 text-slate-600 mx-auto mb-4" />
-              <div className="text-slate-400">No exams created yet</div>
-              <button className="btn btn-primary mt-4" onClick={() => setShowCreate(true)}>Create First Exam</button>
+      {/* Table */}
+      <div className="gov-card">
+        {isLoading ? (
+          <div className="py-12 text-center text-xs text-slate-400">Loading examinations...</div>
+        ) : exams.length === 0 ? (
+          <EmptyState
+            title="No examinations found"
+            description="Create your first examination to configure blueprints and questions."
+            actionText="Create Examination"
+            onAction={() => setShowCreateModal(true)}
+          />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="gov-table">
+              <thead>
+                <tr>
+                  <th>Title</th>
+                  <th>Type</th>
+                  <th>Security Mode</th>
+                  <th>Duration</th>
+                  <th>Status</th>
+                  <th>Created</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {exams.map((ex: any) => (
+                  <tr key={ex.id}>
+                    <td>
+                      <Link
+                        to={`/admin/exams/${ex.id}`}
+                        className="font-bold text-slate-800 hover:text-amber-700"
+                      >
+                        {ex.title}
+                      </Link>
+                    </td>
+                    <td className="text-xs text-slate-600 font-mono">{ex.exam_type || 'CBT'}</td>
+                    <td className="text-xs text-slate-600 font-mono">{ex.security_mode}</td>
+                    <td className="text-xs text-slate-600 font-mono">{ex.duration_minutes} min</td>
+                    <td>
+                      <StatusBadge status={ex.status} type="exam" />
+                    </td>
+                    <td className="text-xs text-slate-500 font-mono">
+                      {ex.created_at ? new Date(ex.created_at).toLocaleDateString('en-IN') : '—'}
+                    </td>
+                    <td>
+                      <Link
+                        to={`/admin/exams/${ex.id}`}
+                        className="btn btn-outline text-xs py-1 px-2.5"
+                      >
+                        Manage <ChevronRight className="w-3.5 h-3.5" />
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Create Exam Modal */}
+      <ActionModal
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        title="Create New Examination"
+        subtitle="Establish examination metadata and parameters"
+      >
+        <form onSubmit={handleCreate} className="space-y-4 text-xs">
+          {error && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{error}</span>
             </div>
           )}
-        </div>
-      )}
 
-      {showCreate && (
-        <CreateExamModal
-          onClose={() => setShowCreate(false)}
-          onCreated={() => qc.invalidateQueries({ queryKey: ['exams'] })}
-        />
-      )}
+          <div>
+            <label className="form-label">Examination Title</label>
+            <input
+              type="text"
+              className="form-input text-xs"
+              placeholder="e.g. National Entrance Exam 2026"
+              value={newTitle}
+              onChange={(e) => setNewTitle(e.target.value)}
+              required
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="form-label">Exam Type</label>
+              <select
+                className="form-input text-xs"
+                value={newType}
+                onChange={(e) => setNewType(e.target.value)}
+              >
+                <option value="CBT">Computer-Based Test (CBT)</option>
+                <option value="PROCTORED_REMOTE">Proctored Remote</option>
+              </select>
+            </div>
+            <div>
+              <label className="form-label">Security Mode</label>
+              <select
+                className="form-input text-xs"
+                value={newSecMode}
+                onChange={(e) => setNewSecMode(e.target.value)}
+              >
+                <option value="STANDARD">STANDARD</option>
+                <option value="HIGH_ASSURANCE">HIGH_ASSURANCE</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="form-label">Duration (Minutes)</label>
+            <input
+              type="number"
+              className="form-input text-xs font-mono"
+              value={newDuration}
+              onChange={(e) => setNewDuration(e.target.value)}
+              min="10"
+              max="600"
+              required
+            />
+          </div>
+
+          <div className="pt-2 flex justify-end gap-2">
+            <button
+              type="button"
+              className="btn btn-outline text-xs"
+              onClick={() => setShowCreateModal(false)}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="btn btn-primary text-xs"
+              disabled={createMutation.isPending || !newTitle.trim()}
+            >
+              {createMutation.isPending ? 'Creating...' : 'Create Examination'}
+            </button>
+          </div>
+        </form>
+      </ActionModal>
     </div>
   );
 }

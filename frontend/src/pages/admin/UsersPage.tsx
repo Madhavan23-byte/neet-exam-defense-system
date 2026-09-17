@@ -1,176 +1,230 @@
+import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Users, UserPlus, Lock, Unlock, Shield, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { usersApi } from '../../services/api';
-import { useState } from 'react';
-import { Users, UserPlus, Lock, Unlock, Shield } from 'lucide-react';
-
-const ROLE_COLORS: Record<string, string> = {
-  SUPER_ADMIN: 'badge-critical',
-  EXAM_AUTHORITY: 'badge-info',
-  SECURITY_OFFICER: 'badge-warning',
-  RELEASE_AUTHORITY: 'badge-purple',
-  MODERATOR: 'badge-info',
-  QUESTION_SETTER: 'badge-secure',
-  AUDITOR: 'badge-purple',
-  CANDIDATE: 'badge-info',
-};
-
-function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const [form, setForm] = useState({
-    username: '', full_name: '', email: '', role: 'QUESTION_SETTER', password: ''
-  });
-
-  const mutation = useMutation({
-    mutationFn: () => usersApi.create(form),
-    onSuccess: () => { onCreated(); onClose(); },
-  });
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-md card-elevated animate-fade-in">
-        <h2 className="text-lg font-bold text-white mb-5 flex items-center gap-2">
-          <UserPlus className="w-5 h-5 text-blue-400" />
-          Provision New User
-        </h2>
-        <div className="space-y-4">
-          <div>
-            <label className="form-label">Full Name</label>
-            <input className="form-input" placeholder="e.g. Dr. Jane Doe"
-              value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })} />
-          </div>
-          <div>
-            <label className="form-label">Username</label>
-            <input className="form-input font-mono" placeholder="username"
-              value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} />
-          </div>
-          <div>
-            <label className="form-label">Email</label>
-            <input type="email" className="form-input" placeholder="email@bsea.demo"
-              value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
-          </div>
-          <div>
-            <label className="form-label">Role</label>
-            <select className="form-input" value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}>
-              {Object.keys(ROLE_COLORS).filter(r => r !== 'CANDIDATE').map(r => (
-                <option key={r} value={r}>{r}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="form-label">Initial Password</label>
-            <input type="password" className="form-input"
-              value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
-          </div>
-        </div>
-        <div className="flex gap-3 mt-6">
-          <button className="btn btn-primary flex-1 justify-center"
-            onClick={() => mutation.mutate()} disabled={!form.username || mutation.isPending}>
-            {mutation.isPending ? 'Provisioning...' : 'Provision User'}
-          </button>
-          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        </div>
-        {mutation.isError && (
-          <div className="mt-3 text-xs text-red-400">
-            {(mutation.error as any)?.response?.data?.detail || 'Failed to create user'}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+import ActionModal from '../../components/ui/ActionModal';
 
 export default function UsersPage() {
-  const qc = useQueryClient();
-  const [showCreate, setShowCreate] = useState(false);
+  const queryClient = useQueryClient();
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [username, setUsername] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState('QUESTION_SETTER');
+  const [password, setPassword] = useState('Password@123');
+  const [msg, setMsg] = useState('');
 
   const { data: users = [], isLoading } = useQuery({
-    queryKey: ['users'],
-    queryFn: () => usersApi.list().then(r => r.data),
+    queryKey: ['users-list'],
+    queryFn: () => usersApi.list().then((r) => r.data || []),
+  });
+
+  const createMutation = useMutation({
+    mutationFn: (data: any) => usersApi.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users-list'] });
+      setShowCreateModal(false);
+      setMsg('User account provisioned with assigned role.');
+      setUsername('');
+      setFullName('');
+      setEmail('');
+    },
+    onError: (err: any) => {
+      setMsg(err?.response?.data?.detail || 'Failed to provision user');
+    },
   });
 
   const lockMutation = useMutation({
     mutationFn: (id: string) => usersApi.lock(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['users-list'] }),
   });
 
   const unlockMutation = useMutation({
     mutationFn: (id: string) => usersApi.unlock(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['users-list'] }),
   });
 
+  const handleCreate = (e: React.FormEvent) => {
+    e.preventDefault();
+    createMutation.mutate({
+      username,
+      full_name: fullName,
+      email,
+      role,
+      password,
+    });
+  };
+
   return (
-    <div className="p-8">
-      <div className="flex items-center justify-between mb-8">
+    <div className="space-y-6">
+      <div className="gov-card-warm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white">Access Management</h1>
-          <p className="text-slate-400 text-sm mt-1">Identity, role provisioning, and account security</p>
+          <h1 className="text-xl font-bold text-[var(--gov-navy-dark)]">
+            Staff & Role-Based Access Control (RBAC)
+          </h1>
+          <p className="text-xs text-slate-500 mt-1">
+            Manage authenticated officials across all 11 system roles with strict privilege separation
+          </p>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowCreate(true)}>
+        <button
+          onClick={() => setShowCreateModal(true)}
+          className="btn btn-navy text-xs"
+        >
           <UserPlus className="w-4 h-4" /> Provision User
         </button>
       </div>
 
-      <div className="card">
+      {msg && (
+        <div className="p-3 bg-amber-50 border border-amber-200 text-amber-900 rounded-lg text-xs flex items-center gap-2">
+          <Shield className="w-4 h-4 text-amber-600" />
+          <span>{msg}</span>
+        </div>
+      )}
+
+      <div className="gov-card">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="gov-table">
             <thead>
-              <tr className="border-b border-slate-800 bg-slate-900/50">
-                <th className="text-left py-3 px-4 text-xs text-slate-500 uppercase tracking-wider">User</th>
-                <th className="text-left py-3 px-4 text-xs text-slate-500 uppercase tracking-wider">Role</th>
-                <th className="text-left py-3 px-4 text-xs text-slate-500 uppercase tracking-wider">Security</th>
-                <th className="text-left py-3 px-4 text-xs text-slate-500 uppercase tracking-wider">Last Login</th>
-                <th className="text-right py-3 px-4 text-xs text-slate-500 uppercase tracking-wider">Actions</th>
+              <tr>
+                <th>Username</th>
+                <th>Full Name</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>MFA Enabled</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {isLoading ? (
-                <tr><td colSpan={5} className="text-center py-8 text-slate-500">Loading users...</td></tr>
-              ) : users.map((u: any) => (
-                <tr key={u.id} className={`border-b border-slate-800/20 hover:bg-slate-800/20 transition-colors ${u.is_locked ? 'opacity-60' : ''}`}>
-                  <td className="py-3 px-4">
-                    <div className="font-semibold text-white">{u.full_name}</div>
-                    <div className="text-xs text-slate-500 font-mono mt-0.5">{u.username}</div>
-                  </td>
-                  <td className="py-3 px-4">
-                    <span className={ROLE_COLORS[u.role] || 'badge-info'}>{u.role}</span>
-                  </td>
-                  <td className="py-3 px-4">
-                    <div className="flex items-center gap-2">
-                      <Shield className={`w-3.5 h-3.5 ${u.mfa_enabled ? 'text-emerald-400' : 'text-slate-500'}`} />
-                      <span className={`text-xs ${u.mfa_enabled ? 'text-emerald-400' : 'text-slate-500'}`}>
-                        {u.mfa_enabled ? 'MFA Enabled' : 'MFA Pending'}
-                      </span>
-                      {u.is_locked && (
-                        <span className="badge-critical ml-2">LOCKED</span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="py-3 px-4 text-xs text-slate-500">
-                    {u.last_login ? new Date(u.last_login).toLocaleString() : 'Never'}
-                  </td>
-                  <td className="py-3 px-4 text-right">
-                    {u.is_locked ? (
-                      <button className="btn btn-ghost text-xs py-1.5" onClick={() => unlockMutation.mutate(u.id)}>
-                        <Unlock className="w-3 h-3" /> Unlock
-                      </button>
-                    ) : (
-                      <button className="btn btn-ghost text-xs py-1.5 text-red-400 hover:border-red-500 hover:bg-red-500/10" onClick={() => lockMutation.mutate(u.id)}>
-                        <Lock className="w-3 h-3" /> Lock
-                      </button>
-                    )}
-                  </td>
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-slate-400">Loading user directory...</td>
                 </tr>
-              ))}
+              ) : (
+                users.map((u: any) => (
+                  <tr key={u.id}>
+                    <td className="font-mono text-xs font-bold text-slate-800">@{u.username}</td>
+                    <td className="text-xs text-slate-700">{u.full_name || '—'}</td>
+                    <td>
+                      <span className="badge-info text-[10px]">{u.role}</span>
+                    </td>
+                    <td>
+                      {u.is_active ? (
+                        <span className="badge-secure">Active</span>
+                      ) : (
+                        <span className="badge-critical">Locked</span>
+                      )}
+                    </td>
+                    <td className="text-xs text-slate-600 font-mono">
+                      {u.is_mfa_enabled ? 'Enforced' : 'Pending'}
+                    </td>
+                    <td>
+                      {u.is_active ? (
+                        <button
+                          onClick={() => lockMutation.mutate(u.id)}
+                          className="btn btn-outline text-[11px] py-1 px-2 text-red-600 hover:bg-red-50"
+                          title="Lock Account"
+                        >
+                          <Lock className="w-3 h-3" /> Lock
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => unlockMutation.mutate(u.id)}
+                          className="btn btn-outline text-[11px] py-1 px-2 text-emerald-600 hover:bg-emerald-50"
+                          title="Unlock Account"
+                        >
+                          <Unlock className="w-3 h-3" /> Unlock
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
       </div>
 
-      {showCreate && (
-        <CreateUserModal
-          onClose={() => setShowCreate(false)}
-          onCreated={() => qc.invalidateQueries({ queryKey: ['users'] })}
-        />
-      )}
+      {/* Provision User Modal */}
+      <ActionModal
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        title="Provision Authorized Official"
+        subtitle="Assign role and establish system credentials"
+      >
+        <form onSubmit={handleCreate} className="space-y-4 text-xs">
+          <div>
+            <label className="form-label">Username</label>
+            <input
+              type="text"
+              className="form-input text-xs"
+              placeholder="e.g. j_doe"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              required
+            />
+          </div>
+
+          <div>
+            <label className="form-label">Full Name</label>
+            <input
+              type="text"
+              className="form-input text-xs"
+              placeholder="e.g. Dr. Jane Doe"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              required
+            />
+          </div>
+
+          <div>
+            <label className="form-label">Email Address</label>
+            <input
+              type="email"
+              className="form-input text-xs"
+              placeholder="e.g. j.doe@bsea.gov.in"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+          </div>
+
+          <div>
+            <label className="form-label">System Role</label>
+            <select
+              className="form-input text-xs"
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+            >
+              <option value="QUESTION_SETTER">QUESTION_SETTER</option>
+              <option value="REVIEWER">REVIEWER</option>
+              <option value="EXAM_AUTHORITY">EXAM_AUTHORITY</option>
+              <option value="RELEASE_AUTHORITY">RELEASE_AUTHORITY</option>
+              <option value="SECURITY_OFFICER">SECURITY_OFFICER</option>
+              <option value="CENTRE_ADMIN">CENTRE_ADMIN</option>
+              <option value="INVIGILATOR">INVIGILATOR</option>
+              <option value="AUDITOR">AUDITOR</option>
+              <option value="SUPER_ADMIN">SUPER_ADMIN</option>
+            </select>
+          </div>
+
+          <div className="pt-2 flex justify-end gap-2">
+            <button
+              type="button"
+              className="btn btn-outline text-xs"
+              onClick={() => setShowCreateModal(false)}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="btn btn-primary text-xs"
+              disabled={createMutation.isPending}
+            >
+              {createMutation.isPending ? 'Provisioning...' : 'Provision User'}
+            </button>
+          </div>
+        </form>
+      </ActionModal>
     </div>
   );
 }

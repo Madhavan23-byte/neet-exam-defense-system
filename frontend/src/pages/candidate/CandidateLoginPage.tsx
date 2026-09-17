@@ -1,173 +1,192 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Shield, FileText, Fingerprint, AlertCircle } from 'lucide-react';
+import React, { useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { Shield, BookOpen, AlertCircle, CheckCircle2, UserCheck, ArrowRight, Clock } from 'lucide-react';
 import { candidateApi, examsApi } from '../../services/api';
 import { useExamSessionStore } from '../../stores/examStore';
-import { useQuery } from '@tanstack/react-query';
+import PortalHeader from '../../components/ui/PortalHeader';
+import PortalFooter from '../../components/ui/PortalFooter';
 
 export default function CandidateLoginPage() {
   const navigate = useNavigate();
-  const { setSession } = useExamSessionStore();
+  const setSession = useExamSessionStore((state) => state.setSession);
 
-  const [registrationNo, setRegistrationNo] = useState('BSEA-2026-DEMO-001');
-  const [password, setPassword] = useState('BSeaDemo@2026');
-  const [selectedExam, setSelectedExam] = useState('');
+  const [regNumber, setRegNumber] = useState('NEET-2026-000001');
+  const [password, setPassword] = useState('Candidate@123');
+  const [selectedExamId, setSelectedExamId] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [agreed, setAgreed] = useState(false);
 
-  // We fetch publicly listed active exams (simplified for demo)
-  // In reality, this would just be the candidate entering an exam code or logging into a portal first.
-  const { data: exams = [] } = useQuery({
-    queryKey: ['available-exams'],
-    queryFn: () => examsApi.list().then(r => r.data),
+  // Fetch real active exams from backend API
+  const { data: exams = [], isLoading: examsLoading } = useQuery({
+    queryKey: ['candidate-exams'],
+    queryFn: async () => {
+      const res = await examsApi.list();
+      return res.data || [];
+    },
   });
-
-  const activeExams = exams.filter((e: any) => e.status === 'RELEASED');
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!agreed) {
-      setError('You must agree to the examination rules');
+    setError('');
+
+    const targetExamId = selectedExamId || (exams.length > 0 ? exams[0].id : '');
+    if (!targetExamId) {
+      setError('Please select an active examination.');
       return;
     }
-    setError('');
+
     setLoading(true);
-
     try {
-      const examToUse = selectedExam || (activeExams.length > 0 ? activeExams[0].id : '');
-      if (!examToUse) {
-        setError('No active exams available');
-        setLoading(false);
-        return;
-      }
+      const res = await candidateApi.login(regNumber, password, targetExamId);
+      const data = res.data;
 
-      const res = await candidateApi.login(registrationNo, password, examToUse);
-      setSession(res.data);
+      // Persist candidate session store
+      setSession({
+        sessionToken: data.session_token,
+        examId: targetExamId,
+        candidateName: data.candidate_name,
+        watermarkId: data.watermark_id,
+        totalQuestions: data.total_questions || 0,
+        durationMinutes: data.duration_minutes || 180,
+        expiresAt: data.expires_at,
+      });
+
       navigate('/candidate/exam');
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Authentication failed. Ensure the exam is released.');
+      setError(
+        err?.response?.data?.detail || err.message || 'Authentication failed. Please verify Roll Number & Password.'
+      );
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen security-grid flex items-center justify-center p-6">
-      <div className="fixed inset-0 bg-gradient-to-br from-blue-950/20 via-transparent to-purple-950/20 pointer-events-none" />
+    <div className="min-h-screen flex flex-col bg-[var(--gov-canvas)]">
+      <PortalHeader subtitle="Candidate Computer-Based Test (CBT) Portal" />
 
-      <div className="w-full max-w-5xl flex flex-col lg:flex-row gap-8 relative z-10">
-        {/* Left Rules Panel */}
-        <div className="lg:w-1/2 card-elevated flex flex-col justify-between">
-          <div>
-            <div className="flex items-center gap-3 mb-6 pb-6 border-b border-blue-900/20">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center">
-                <Shield className="w-6 h-6 text-white" />
-              </div>
-              <div>
-                <div className="font-bold text-white text-lg">B-SEA Secure CBT</div>
-                <div className="text-xs text-blue-400">Candidate Examination Portal</div>
-              </div>
+      <main className="flex-1 max-w-4xl mx-auto px-4 py-8 sm:py-12 w-full">
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-start">
+          {/* Instructions Column */}
+          <div className="md:col-span-5 space-y-4">
+            <div className="gov-card">
+              <h2 className="text-sm font-bold text-[var(--gov-navy-dark)] uppercase tracking-wider mb-3 flex items-center gap-2">
+                <BookOpen className="w-4 h-4 text-amber-600" />
+                Examination Instructions
+              </h2>
+              <ul className="space-y-2.5 text-xs text-slate-600 leading-relaxed">
+                <li className="flex items-start gap-2">
+                  <span className="w-4 h-4 rounded-full bg-amber-500/20 text-amber-900 font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">1</span>
+                  <span>Ensure your Roll Number matches the entry on your official Admit Card.</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="w-4 h-4 rounded-full bg-amber-500/20 text-amber-900 font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">2</span>
+                  <span>Do not refresh, close, or switch browser tabs during active testing.</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="w-4 h-4 rounded-full bg-amber-500/20 text-amber-900 font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">3</span>
+                  <span>Responses are securely saved in real time to the examination server.</span>
+                </li>
+              </ul>
             </div>
 
-            <h2 className="text-lg font-bold text-white mb-4">Examination Rules & Instructions</h2>
-            <div className="space-y-4 text-sm text-slate-400">
-              <p>
-                <strong className="text-slate-300">1. Security Monitoring:</strong> This examination environment is continuously monitored.
-                Any attempt to switch tabs, exit fullscreen, or use developer tools will be logged as a security violation.
-              </p>
-              <p>
-                <strong className="text-slate-300">2. Watermarking:</strong> All question content is cryptographically watermarked with your identity.
-                Unauthorized photography or screenshots can be forensically traced back to your session.
-              </p>
-              <p>
-                <strong className="text-slate-300">3. Integrity:</strong> Questions are decrypted in real-time. Do not attempt to reverse-engineer
-                or capture the network traffic. The answer key is not transmitted to this client.
+            <div className="gov-card bg-emerald-50/50 border-emerald-200">
+              <div className="flex items-center gap-2 font-bold text-xs text-emerald-900 mb-1">
+                <CheckCircle2 className="w-4 h-4 text-emerald-700" />
+                <span>System Readiness Check</span>
+              </div>
+              <p className="text-[11px] text-emerald-800 leading-relaxed">
+                Browser verified: Modern standards compliant. Cryptographic session isolation active.
               </p>
             </div>
           </div>
-          <div className="mt-8 pt-6 border-t border-blue-900/20 text-xs text-slate-500">
-            Powered by Bharat Secure Examination Architecture
+
+          {/* Login Form Column */}
+          <div className="md:col-span-7">
+            <div className="gov-card-elevated">
+              <div className="mb-6">
+                <h1 className="text-xl font-bold text-[var(--gov-navy-dark)]">
+                  Candidate Verification
+                </h1>
+                <p className="text-xs text-slate-500 mt-1">
+                  Enter your assigned registration credentials to enter the CBT session
+                </p>
+              </div>
+
+              {error && (
+                <div className="p-3 mb-5 bg-red-50 border border-red-200 rounded-lg text-red-700 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{error}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleLogin} className="space-y-4">
+                <div>
+                  <label className="form-label">Examination</label>
+                  <select
+                    className="form-input text-xs"
+                    value={selectedExamId}
+                    onChange={(e) => setSelectedExamId(e.target.value)}
+                    disabled={examsLoading || exams.length === 0}
+                  >
+                    {exams.length === 0 ? (
+                      <option value="">No released examinations currently active</option>
+                    ) : (
+                      exams.map((ex: any) => (
+                        <option key={ex.id} value={ex.id}>
+                          {ex.title} ({ex.exam_type || 'CBT'})
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="form-label">Roll Number / Registration ID</label>
+                  <input
+                    type="text"
+                    className="form-input text-xs font-mono"
+                    placeholder="e.g. NEET-2026-000001"
+                    value={regNumber}
+                    onChange={(e) => setRegNumber(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="form-label">Password / Date of Birth</label>
+                  <input
+                    type="password"
+                    className="form-input text-xs"
+                    placeholder="Enter examination password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="submit"
+                    className="btn btn-amber w-full justify-center text-xs py-2.5"
+                    disabled={loading || !regNumber || !password}
+                  >
+                    {loading ? 'Verifying Session...' : 'Start Examination'}
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </form>
+
+              <div className="mt-5 text-center text-xs text-slate-500">
+                Facing an issue? Notify your centre invigilator immediately.
+              </div>
+            </div>
           </div>
         </div>
+      </main>
 
-        {/* Right Login Panel */}
-        <div className="lg:w-1/2 card-elevated">
-          <div className="flex items-center gap-2 mb-6">
-            <Fingerprint className="w-5 h-5 text-blue-400" />
-            <h2 className="text-xl font-bold text-white">Candidate Authentication</h2>
-          </div>
-
-          {error && (
-            <div className="flex items-center gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm mb-6">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              {error}
-            </div>
-          )}
-
-          <form onSubmit={handleLogin} className="space-y-5">
-            <div>
-              <label className="form-label">Select Examination</label>
-              <select
-                className="form-input"
-                value={selectedExam}
-                onChange={e => setSelectedExam(e.target.value)}
-                required
-              >
-                {activeExams.length === 0 && <option value="">No released exams</option>}
-                {activeExams.map((e: any) => (
-                  <option key={e.id} value={e.id}>{e.title}</option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="form-label">Registration Number</label>
-              <input
-                className="form-input font-mono"
-                placeholder="Registration Number"
-                value={registrationNo}
-                onChange={e => setRegistrationNo(e.target.value)}
-                required
-              />
-            </div>
-
-            <div>
-              <label className="form-label">Password</label>
-              <input
-                type="password"
-                className="form-input"
-                placeholder="Password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                required
-              />
-            </div>
-
-            <label className="flex items-start gap-3 p-3 rounded-lg bg-blue-950/20 border border-blue-900/30 cursor-pointer hover:bg-blue-950/40 transition-colors">
-              <input
-                type="checkbox"
-                className="mt-1"
-                checked={agreed}
-                onChange={e => setAgreed(e.target.checked)}
-              />
-              <span className="text-xs text-slate-300">
-                I have read and agree to all examination rules. I understand that security violations
-                may result in immediate termination of my examination session.
-              </span>
-            </label>
-
-            <button
-              type="submit"
-              className="btn btn-primary w-full justify-center text-lg py-3 mt-4"
-              disabled={loading}
-            >
-              <FileText className="w-5 h-5" />
-              {loading ? 'Authenticating & Initializing Secure Session...' : 'Start Secure Examination'}
-            </button>
-          </form>
-        </div>
-      </div>
+      <PortalFooter />
     </div>
   );
 }

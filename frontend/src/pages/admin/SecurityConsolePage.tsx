@@ -1,113 +1,175 @@
-import { useQuery, useMutation } from '@tanstack/react-query';
+import React, { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import {
+  Activity, AlertTriangle, Shield, TrendingUp, RefreshCw,
+  Clock, CheckCircle2, AlertOctagon, Filter, Eye
+} from 'lucide-react';
 import { securityApi } from '../../services/api';
-import { Activity, AlertTriangle, Shield, TrendingUp } from 'lucide-react';
-
-const SEVERITY_COLORS: Record<string, string> = {
-  LOW: 'badge-info',
-  MEDIUM: 'badge-warning',
-  HIGH: 'badge-critical',
-  CRITICAL: 'badge-critical',
-};
+import DataTile from '../../components/ui/DataTile';
+import StatusBadge from '../../components/ui/StatusBadge';
+import EmptyState from '../../components/ui/EmptyState';
 
 export default function SecurityConsolePage() {
-  const { data: stats } = useQuery({
+  const [filterSeverity, setFilterSeverity] = useState('ALL');
+
+  // Constraint 4: Real data only from actual backend API
+  const {
+    data: stats,
+    isLoading: statsLoading,
+    refetch: refetchStats,
+    isFetching: statsFetching,
+  } = useQuery({
     queryKey: ['security-stats'],
-    queryFn: () => securityApi.getStats().then(r => r.data),
-    refetchInterval: 5000,
+    queryFn: () => securityApi.getStats().then((r) => r.data),
+    refetchInterval: 10000,
   });
 
-  const { data: events = [] } = useQuery({
+  const {
+    data: events = [],
+    isLoading: eventsLoading,
+    refetch: refetchEvents,
+    isFetching: eventsFetching,
+  } = useQuery({
     queryKey: ['security-events'],
-    queryFn: () => securityApi.getEvents().then(r => r.data),
-    refetchInterval: 5000,
+    queryFn: () => securityApi.getEvents().then((r) => r.data || []),
+    refetchInterval: 10000,
+  });
+
+  const filteredEvents = events.filter((ev: any) => {
+    if (filterSeverity === 'ALL') return true;
+    return ev.severity === filterSeverity;
   });
 
   return (
-    <div className="p-8">
-      <div className="flex items-center justify-between mb-8">
+    <div className="space-y-6">
+      {/* Top Banner */}
+      <div className="gov-card-warm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white">Security Console</h1>
-          <p className="text-slate-400 text-sm mt-1">Real-time anomaly detection and threat monitoring</p>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-slate-500">
-          <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-          Live monitoring
-        </div>
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
-        {[
-          { label: 'Total Events', value: stats?.total_security_events ?? '—', color: 'blue', icon: <Activity className="w-5 h-5" /> },
-          { label: 'Unresolved Critical', value: stats?.unresolved_high_critical ?? '—', color: stats?.unresolved_high_critical > 0 ? 'red' : 'green', icon: <AlertTriangle className="w-5 h-5" /> },
-          { label: 'Events (24h)', value: stats?.events_last_24h ?? '—', color: 'amber', icon: <TrendingUp className="w-5 h-5" /> },
-          { label: 'Open Incidents', value: stats?.open_incidents ?? '—', color: stats?.open_incidents > 0 ? 'red' : 'green', icon: <Shield className="w-5 h-5" /> },
-        ].map((s, i) => (
-          <div key={i} className="card-elevated">
-            <div className={`w-10 h-10 rounded-xl flex items-center justify-center mb-3 ${
-              s.color === 'blue' ? 'bg-blue-500/10 text-blue-400' :
-              s.color === 'red' ? 'bg-red-500/10 text-red-400' :
-              s.color === 'green' ? 'bg-emerald-500/10 text-emerald-400' :
-              'bg-amber-500/10 text-amber-400'
-            }`}>
-              {s.icon}
-            </div>
-            <div className="text-2xl font-bold text-white font-mono">{s.value}</div>
-            <div className="text-xs text-slate-400 mt-1">{s.label}</div>
+          <div className="flex items-center gap-2 mb-1">
+            <h1 className="text-xl font-bold text-[var(--gov-navy-dark)]">
+              Threat Observability & Telemetry Console
+            </h1>
+            <span className="badge-secure">Phase 3C-5C Detection Active</span>
           </div>
-        ))}
+          <p className="text-xs text-slate-500">
+            Real-time heuristic signal correlation, rate anomaly detection, and tamper telemetry
+          </p>
+        </div>
+        <button
+          onClick={() => {
+            refetchStats();
+            refetchEvents();
+          }}
+          disabled={statsFetching || eventsFetching}
+          className="btn btn-outline text-xs"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${statsFetching || eventsFetching ? 'animate-spin' : ''}`} />
+          <span>{statsFetching || eventsFetching ? 'Refreshing...' : 'Refresh Telemetry'}</span>
+        </button>
       </div>
 
-      {/* Events table */}
-      <div className="card">
-        <h2 className="font-bold text-white mb-4">Security Events</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-800">
-                <th className="text-left py-2 px-3 text-xs text-slate-500 uppercase tracking-wider">Event Type</th>
-                <th className="text-left py-2 px-3 text-xs text-slate-500 uppercase tracking-wider">Severity</th>
-                <th className="text-left py-2 px-3 text-xs text-slate-500 uppercase tracking-wider">Risk Score</th>
-                <th className="text-left py-2 px-3 text-xs text-slate-500 uppercase tracking-wider">Actor</th>
-                <th className="text-left py-2 px-3 text-xs text-slate-500 uppercase tracking-wider">Status</th>
-                <th className="text-left py-2 px-3 text-xs text-slate-500 uppercase tracking-wider">Time</th>
-              </tr>
-            </thead>
-            <tbody>
-              {events.map((e: any) => (
-                <tr key={e.id} className="border-b border-slate-800/30 hover:bg-slate-800/20 transition-colors">
-                  <td className="py-3 px-3 font-mono text-xs text-slate-300">{e.event_type}</td>
-                  <td className="py-3 px-3">
-                    <span className={SEVERITY_COLORS[e.severity] || 'badge-info'}>{e.severity}</span>
-                  </td>
-                  <td className="py-3 px-3">
-                    <div className="flex items-center gap-2">
-                      <div className="h-1.5 w-24 bg-slate-800 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full ${e.risk_score > 0.7 ? 'bg-red-500' : e.risk_score > 0.4 ? 'bg-amber-500' : 'bg-blue-500'}`}
-                          style={{ width: `${e.risk_score * 100}%` }}
-                        />
-                      </div>
-                      <span className="text-xs font-mono text-slate-400">{(e.risk_score * 100).toFixed(0)}%</span>
-                    </div>
-                  </td>
-                  <td className="py-3 px-3 text-xs font-mono text-slate-500">{e.actor_id?.slice(0, 12) || 'system'}</td>
-                  <td className="py-3 px-3">
-                    <span className={e.resolved ? 'badge-secure' : 'badge-critical'}>{e.resolved ? 'RESOLVED' : 'OPEN'}</span>
-                  </td>
-                  <td className="py-3 px-3 text-xs text-slate-500">
-                    {new Date(e.created_at).toLocaleString()}
-                  </td>
-                </tr>
-              ))}
-              {events.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="text-center py-8 text-slate-500">No security events</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+      {/* Verified Telemetry Metrics (Constraint 4) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <DataTile
+          label="Total Security Events"
+          value={statsLoading ? '...' : stats?.total_events ?? events.length}
+          subtitle="All recorded telemetry signals"
+          icon={<Activity className="w-4 h-4 text-blue-700" />}
+        />
+        <DataTile
+          label="Unresolved Critical"
+          value={statsLoading ? '...' : stats?.unresolved_critical ?? 0}
+          subtitle="Requiring immediate triage"
+          icon={<AlertOctagon className="w-4 h-4 text-red-700" />}
+        />
+        <DataTile
+          label="Tab Switches (24h)"
+          value={statsLoading ? '...' : stats?.tab_switch_events ?? 0}
+          subtitle="Candidate browser anomalies"
+          icon={<TrendingUp className="w-4 h-4 text-amber-700" />}
+        />
+        <DataTile
+          label="Integrity Check Failures"
+          value={statsLoading ? '...' : stats?.integrity_failures ?? 0}
+          subtitle="Cryptographic hash mismatches"
+          icon={<Shield className="w-4 h-4 text-purple-700" />}
+        />
+      </div>
+
+      {/* Security Telemetry Table */}
+      <div className="gov-card">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-[var(--gov-border)] mb-4 gap-2">
+          <h2 className="text-sm font-bold text-[var(--gov-navy-dark)] flex items-center gap-2">
+            <Activity className="w-4 h-4 text-amber-600" />
+            Security Event Feed
+          </h2>
+
+          <div className="flex items-center gap-2">
+            <Filter className="w-3.5 h-3.5 text-slate-400" />
+            <span className="text-xs text-slate-500 font-semibold">Severity:</span>
+            <select
+              className="form-input text-xs py-1 px-2"
+              value={filterSeverity}
+              onChange={(e) => setFilterSeverity(e.target.value)}
+            >
+              <option value="ALL">All Severities</option>
+              <option value="CRITICAL">Critical</option>
+              <option value="HIGH">High</option>
+              <option value="MEDIUM">Medium</option>
+              <option value="LOW">Low</option>
+            </select>
+          </div>
         </div>
+
+        {eventsLoading ? (
+          <div className="py-12 text-center text-xs text-slate-400">Loading security events...</div>
+        ) : filteredEvents.length === 0 ? (
+          <EmptyState
+            title="No security events detected"
+            description="System telemetry indicates standard operational activity without anomalies."
+          />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="gov-table">
+              <thead>
+                <tr>
+                  <th>Event Type</th>
+                  <th>Severity</th>
+                  <th>Resource ID</th>
+                  <th>Event Details / Context</th>
+                  <th>Timestamp</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredEvents.map((ev: any) => (
+                  <tr key={ev.id}>
+                    <td className="font-bold text-slate-800 text-xs">{ev.event_type}</td>
+                    <td>
+                      <StatusBadge status={ev.severity} type="incident" />
+                    </td>
+                    <td className="font-mono text-xs text-slate-600 truncate max-w-[140px]">
+                      {ev.resource_id || 'SYSTEM'}
+                    </td>
+                    <td className="text-xs text-slate-600 max-w-[280px] truncate" title={JSON.stringify(ev.details)}>
+                      {typeof ev.details === 'object' ? JSON.stringify(ev.details) : ev.details || '—'}
+                    </td>
+                    <td className="text-xs text-slate-500 font-mono">
+                      {ev.created_at ? new Date(ev.created_at).toLocaleTimeString('en-IN') : '—'}
+                    </td>
+                    <td>
+                      {ev.resolved ? (
+                        <span className="badge-secure">Resolved</span>
+                      ) : (
+                        <span className="badge-warning">Active</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
