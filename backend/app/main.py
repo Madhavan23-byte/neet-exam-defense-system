@@ -66,10 +66,11 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Observability & telemetry middleware (Phase 3C-5B)
 app.add_middleware(BSEAHttpTelemetryMiddleware)
 
-# Set up CORS
+# Set up CORS — restricted to configured origins in production per Rev-04.1
+allowed_origins = settings.cors_origins_list if settings.cors_origins != "*" else ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify exact frontend domains
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
