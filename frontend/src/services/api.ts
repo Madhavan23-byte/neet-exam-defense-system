@@ -16,9 +16,26 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Handle 401 globally
+// Response interceptor: Global 401 handling and SPA catch-all HTML detection
 api.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    // If an API request receives an HTML document instead of JSON (typical when backend is offline on SPA hosts)
+    if (
+      typeof res.data === 'string' &&
+      (res.data.trim().toLowerCase().startsWith('<!doctype') ||
+       res.data.trim().toLowerCase().startsWith('<html'))
+    ) {
+      const offlineError: any = new Error('Examination backend services are currently unreachable.');
+      offlineError.isBackendOffline = true;
+      offlineError.response = {
+        status: 503,
+        statusText: 'Service Unavailable',
+        data: { detail: 'Examination services are currently unavailable. Please try again shortly.' },
+      };
+      return Promise.reject(offlineError);
+    }
+    return res;
+  },
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem('bsea_token');

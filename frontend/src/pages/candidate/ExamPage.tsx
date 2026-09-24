@@ -342,7 +342,7 @@ export default function ExamPage() {
 
                   {/* Options List */}
                   <div className="space-y-3">
-                    {question.content?.options &&
+                    {Array.isArray(question?.content?.options) &&
                       question.content.options.map((optionText: string, optIdx: number) => {
                         const isSelected = question.selected_option === optIdx;
                         return (
