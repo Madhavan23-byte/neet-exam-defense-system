@@ -8,7 +8,7 @@ services:
     environment:
       POSTGRES_DB: bsea_db
       POSTGRES_USER: bsea_user
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bsea_dev_password_change_me}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-<DB_PASSWORD>}
     ports:
       - "5432:5432"
     volumes:
@@ -26,13 +26,13 @@ services:
   redis:
     image: redis:7-alpine
     container_name: bsea-redis
-    command: redis-server --requirepass ${REDIS_PASSWORD:-bsea_redis_pass} --appendonly yes
+    command: redis-server --requirepass ${REDIS_PASSWORD:-<REDIS_PASSWORD>} --appendonly yes
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "--auth", "${REDIS_PASSWORD:-bsea_redis_pass}", "ping"]
+      test: ["CMD", "redis-cli", "--auth", "${REDIS_PASSWORD:-<REDIS_PASSWORD>}", "ping"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -45,8 +45,8 @@ services:
     container_name: bsea-minio
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-bsea_minio_access}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-bsea_minio_secret_change_me}
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-<MINIO_ACCESS_KEY>}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-<MINIO_SECRET_KEY>}
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -69,7 +69,7 @@ services:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-      mc alias set bsea http://minio:9000 ${MINIO_ACCESS_KEY:-bsea_minio_access} ${MINIO_SECRET_KEY:-bsea_minio_secret_change_me};
+      mc alias set bsea http://minio:9000 ${MINIO_ACCESS_KEY:-<MINIO_ACCESS_KEY>} ${MINIO_SECRET_KEY:-<MINIO_SECRET_KEY>};
       mc mb --ignore-existing bsea/bsea-questions;
       mc mb --ignore-existing bsea/bsea-configs;
       mc mb --ignore-existing bsea/bsea-audit;
@@ -85,16 +85,16 @@ services:
       dockerfile: Dockerfile
     container_name: bsea-backend
     environment:
-      DATABASE_URL: postgresql+asyncpg://bsea_user:${POSTGRES_PASSWORD:-bsea_dev_password_change_me}@db:5432/bsea_db
-      SYNC_DATABASE_URL: postgresql://bsea_user:${POSTGRES_PASSWORD:-bsea_dev_password_change_me}@db:5432/bsea_db
-      REDIS_URL: redis://:${REDIS_PASSWORD:-bsea_redis_pass}@redis:6379/0
+      DATABASE_URL: postgresql+asyncpg://bsea_user:${POSTGRES_PASSWORD:-<DB_PASSWORD>}@db:5432/bsea_db
+      SYNC_DATABASE_URL: postgresql://bsea_user:${POSTGRES_PASSWORD:-<DB_PASSWORD>}@db:5432/bsea_db
+      REDIS_URL: redis://:${REDIS_PASSWORD:-<REDIS_PASSWORD>}@redis:6379/0
       MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-bsea_minio_access}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-bsea_minio_secret_change_me}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-<MINIO_ACCESS_KEY>}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-<MINIO_SECRET_KEY>}
       MINIO_SECURE: "false"
-      SECRET_KEY: ${SECRET_KEY:-bsea_jwt_secret_change_me_in_production_minimum_64_chars_abc123}
-      MOCK_KMS_MASTER_KEY: ${MOCK_KMS_MASTER_KEY:-bsea_kms_master_key_change_me_32ch}
-      MOCK_KMS_SIGNING_KEY: ${MOCK_KMS_SIGNING_KEY:-bsea_ed25519_seed_32_bytes_change_}
+      SECRET_KEY: ${SECRET_KEY:-<JWT_SECRET_KEY>}
+      MOCK_KMS_MASTER_KEY: ${MOCK_KMS_MASTER_KEY:-<MOCK_KMS_MASTER_KEY>}
+      MOCK_KMS_SIGNING_KEY: ${MOCK_KMS_SIGNING_KEY:-<MOCK_SIGNING_KEY>}
       ENVIRONMENT: production-local
       GUNICORN_WORKERS: 4
       LOG_LEVEL: INFO

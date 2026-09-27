@@ -52,7 +52,7 @@ class Settings(BaseSettings):
 
     # ── Redis ─────────────────────────────────────────────────────────────────
     redis_url: str = Field(
-        default="redis://:bsea_redis_password_change_me@localhost:6379/0"
+        default="redis://localhost:6379/0", alias="REDIS_URL"
     )
     redis_session_ttl: int = 7200  # 2 hours (exam session lifetime)
     redis_rate_limit_ttl: int = 60

@@ -105,7 +105,7 @@
 
 ## 7. Redis
 
-- **Configured URI:** `redis://:bsea_redis_pass@localhost:6379/0`
+- **Configured URI:** `redis://:<REDIS_PASSWORD>@localhost:6379/0`
 - **Role:** Distributed rate limiting quotas, candidate active session tracking, heartbeat liveness cache, ephemeral token leases.
 - **Local Status:** Windows host refused connection on port 6379 (Redis service is not running locally; runs in Docker Compose).
 - **Resilience Behavior:** The codebase implements graceful degradation: candidate test sessions continue with local synchronization if Redis is offline, while high-risk administrative operations fail closed per Phase 3C-1 specifications.

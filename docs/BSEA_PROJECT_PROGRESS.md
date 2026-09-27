@@ -78,3 +78,29 @@ Backend Public URL: https://loops-acquisitions-theory-customized.trycloudflare.c
 - [x] Phase 24: Non-Regression Guarantee (Preserved envelope encryption, MockKMS, RBAC, 5C, 5D, 5E, and audit)
 - [x] Phase 25: Simulated External Evaluator Review (Zero broken links, zero fake claims, 100% testable)
 - [x] Phase 26: Final Quality Gate & Report Compilation
+
+---
+
+## 4. Security Remediation: Credential Sanitization & Placeholder Hardening
+
+- **Trigger:** Immediate remediation of exposed placeholder credential in prior validation logs.
+- **Actions Completed:**
+  1. **Source Code Default Hardening (`backend/app/core/config.py`):**
+     - Removed hardcoded Redis fallback password.
+     - Changed default to standard unauthenticated local Redis `redis://localhost:6379/0`.
+     - Added explicit `alias="REDIS_URL"` for environment variable binding.
+  2. **Environment & Deployment Templates (`.env.example` & `docker-compose.yml`):**
+     - Replaced all template credentials with standardized, non-secret placeholders: `<REDIS_PASSWORD>`, `<DB_PASSWORD>`, `<JWT_SECRET_KEY>`, `<MOCK_KMS_MASTER_KEY>`, `<MOCK_SIGNING_KEY>`, `<MINIO_ACCESS_KEY>`, `<MINIO_SECRET_KEY>`.
+     - Zero actual passwords, private keys, or tokens committed to Git.
+  3. **Documentation Sanitization (`docs/BSEA_MASTER_PROJECT_STATE.md`, `docs/performance/`):**
+     - Sanitized Redis and PostgreSQL connection URI examples to use `<REDIS_PASSWORD>` and `<DB_PASSWORD>`.
+  4. **Active Service Rotation & Re-Verification:**
+     - Rotated running local Redis configuration to invalidate prior password credentials.
+     - Updated local `backend/.env` (properly gitignored, never committed) to use clean local connection.
+     - Restarted backend uvicorn service. Verified `/health/ready` returns HTTP 200 (`database: ok`, `redis: ok`, `crypto: ok`).
+     - Tested live Vercel authentication: `POST /api/v1/auth/login` returns HTTP 200 with valid JWT.
+  5. **Test Suite Non-Regression:**
+     - Executed full test suite: **306 passed, 0 failed, 5 skipped (total 311)**.
+     - 5D Incident Management: 31/31 passed.
+     - 5E Containment: 35/35 passed.
+     - Security Attack Suite: 16 passed, 5 skipped, 0 failed.

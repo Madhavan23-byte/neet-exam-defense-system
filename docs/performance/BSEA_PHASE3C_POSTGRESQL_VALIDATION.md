@@ -69,8 +69,8 @@ Switching between SQLite and PostgreSQL requires only a single environment varia
 DATABASE_URL=sqlite+aiosqlite:///./bsea_demo.db
 
 # PostgreSQL (staging/production)
-DATABASE_URL=postgresql+asyncpg://bsea_user:password@localhost:5432/bsea_dev
-SYNC_DATABASE_URL=postgresql+psycopg2://bsea_user:password@localhost:5432/bsea_dev
+DATABASE_URL=postgresql+asyncpg://bsea_user:<DB_PASSWORD>@localhost:5432/bsea_dev
+SYNC_DATABASE_URL=postgresql+psycopg2://bsea_user:<DB_PASSWORD>@localhost:5432/bsea_dev
 ```
 
 ---
