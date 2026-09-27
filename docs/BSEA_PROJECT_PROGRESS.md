@@ -12,7 +12,7 @@ Latest Commit: e57bfe
 |---|---|---|---|
 | **Frontend** | [x] COMPLETED | https://neet-exam-defense-system.vercel.app | React 19 + TypeScript + Vite |
 | **Backend Core** | [x] COMPLETED | http://0.0.0.0:8000 | FastAPI (Python 3.14) |
-| **Public HTTPS URL** | [x] COMPLETED | https://aid-handmade-thee-opinions.trycloudflare.com | Cloudflare TLS 1.3 Edge |
+| **Public HTTPS URL** | [x] COMPLETED | https://loops-acquisitions-theory-customized.trycloudflare.com | Cloudflare TLS 1.3 Edge |
 | **PostgreSQL 16** | [x] COMPLETED | localhost:5432/bsea | Alembic Head 2c3d4e5f6a7 (35 tables, 133 indexes) |
 | **Redis 8.10** | [x] COMPLETED | localhost:6379/0 | Authenticated standalone with AOF persistence |
 | **KMS Provider** | [x] COMPLETED | MockKMS | AES-256-GCM Envelope Encryption verified |
@@ -26,7 +26,7 @@ Latest Commit: e57bfe
 
 ### Issue 1: Staff Portal \"Request failed with status code 405\"
 - **Root Cause:** In Vercel, requests to POST /api/v1/auth/login were captured by the catch-all SPA rewrite {"source": "/(.*)", "destination": "/index.html"}. Vercel's static file engine rejected HTTP POST requests against static HTML with HTTP 405 Method Not Allowed.
-- **Solution:** Added edge reverse proxy rewrite {"source": "/api/v1/:path*", "destination": "https://aid-handmade-thee-opinions.trycloudflare.com/api/v1/:path*"} to both ercel.json and rontend/vercel.json, and configured DEFAULT_BACKEND_URL in rontend/src/services/api.ts.
+- **Solution:** Added edge reverse proxy rewrite {"source": "/api/v1/:path*", "destination": "https://loops-acquisitions-theory-customized.trycloudflare.com/api/v1/:path*"} to both ercel.json and rontend/vercel.json, and configured DEFAULT_BACKEND_URL in rontend/src/services/api.ts.
 - **Verification:** Verified live on Vercel (https://neet-exam-defense-system.vercel.app/login). POST /api/v1/auth/login no longer returns 405; requests are transparently routed to the backend.
 
 ### Issue 3: Architectural Separation of Candidate Discovery and Staff Exam Administration

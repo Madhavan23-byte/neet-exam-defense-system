@@ -37,7 +37,7 @@
   "rewrites": [
     {
       "source": "/api/v1/:path*",
-      "destination": "https://aid-handmade-thee-opinions.trycloudflare.com/api/v1/:path*"
+      "destination": "https://loops-acquisitions-theory-customized.trycloudflare.com/api/v1/:path*"
     },
     {
       "source": "/(.*)",
