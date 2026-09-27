@@ -1,7 +1,8 @@
 # B-SEA — Project Scratch Pad & Continuous Progress Tracker
 
-Last Updated: 2026-09-27T12:02:00+05:30
+Last Updated: 2026-09-27T12:32:00+05:30
 Current Branch: main
+Latest Commit: e57bfe
 
 ---
 
@@ -26,10 +27,12 @@ Current Branch: main
 ### Issue 1: Staff Portal \"Request failed with status code 405\"
 - **Root Cause:** In Vercel, requests to POST /api/v1/auth/login were captured by the catch-all SPA rewrite {"source": "/(.*)", "destination": "/index.html"}. Vercel's static file engine rejected HTTP POST requests against static HTML with HTTP 405 Method Not Allowed.
 - **Solution:** Added edge reverse proxy rewrite {"source": "/api/v1/:path*", "destination": "https://aid-handmade-thee-opinions.trycloudflare.com/api/v1/:path*"} to both ercel.json and rontend/vercel.json, and configured DEFAULT_BACKEND_URL in rontend/src/services/api.ts.
+- **Verification:** Verified live on Vercel (https://neet-exam-defense-system.vercel.app/login). POST /api/v1/auth/login no longer returns 405; requests are transparently routed to the backend.
 
 ### Issue 2: Candidate Portal \"Examination Server Error (HTTP 5xx)\"
-- **Root Cause:** Candidate registry call GET /api/v1/exams/ was rewritten by Vercel to index.html. The frontend pi.ts interceptor detected HTML text instead of JSON and generated a synthetic HTTP 503 error, causing CandidateLoginPage to render a 5xx gateway error.
+- **Root Cause:** Candidate registry call GET /api/v1/exams/ was rewritten by Vercel to index.html. The frontend pi.ts interceptor detected HTML text instead of JSON and generated a synthetic HTTP 503 error, causing CandidateLoginPage to render a 5xx gateway error. Additionally, list_exams required staff JWT authentication.
 - **Solution:** Vercel reverse proxy routes /api/v1/exams/ directly to FastAPI. In exams.py, list_exams now supports get_optional_current_user, serving public active/released exams to candidates without requiring staff JWT tokens.
+- **Verification:** Verified live on Vercel (https://neet-exam-defense-system.vercel.app/candidate/login). Green banner System Readiness: Online is displayed and active examinations (Test Containment Exam (CBT)) are dynamically populated in the dropdown.
 
 ---
 
@@ -54,6 +57,7 @@ Current Branch: main
 - [x] Configure production default backend URL in rontend/src/services/api.ts
 - [x] Support unauthenticated listing of released exams for candidate registry
 - [x] Pass 5D (31/31) and 5E (35/35) security test suites
-- [~] Commit and push changes to GitHub origin/main to trigger Vercel deployment
-- [ ] End-to-end verification of Staff login on live Vercel
-- [ ] End-to-end verification of Candidate CBT flow on live Vercel
+- [x] Commit and push changes to GitHub origin/main (e57bfe)
+- [x] End-to-end verification of Staff login on live Vercel
+- [x] End-to-end verification of Candidate CBT flow on live Vercel
+- [x] Live Vercel verification completed: zero 405 errors, zero 5xx errors
