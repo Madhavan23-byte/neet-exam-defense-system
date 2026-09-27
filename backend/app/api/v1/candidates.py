@@ -81,7 +81,7 @@ async def list_candidate_exams(
     Public candidate registry discovery endpoint.
     Returns only RELEASED and ONGOING exams without leaking confidential blueprint or administrative data.
     """
-    query = select(Exam).where(Exam.status.in_([ExamStatus.RELEASED, ExamStatus.ONGOING]))
+    query = select(Exam).where(Exam.status == ExamStatus.RELEASED)
     result = await db.execute(query.order_by(Exam.created_at.desc()))
     exams = result.scalars().all()
     return [
@@ -143,7 +143,7 @@ async def candidate_login(
     if not exam:
         raise HTTPException(status_code=404, detail="Exam not found")
 
-    if exam.status != ExamStatus.RELEASED:
+    if exam.status not in (ExamStatus.RELEASED, ExamStatus.ONGOING):
         await audit.log(
             event_type="CANDIDATE_ACCESS_DENIED_UNRELEASED",
             result=AuditResult.BLOCKED,

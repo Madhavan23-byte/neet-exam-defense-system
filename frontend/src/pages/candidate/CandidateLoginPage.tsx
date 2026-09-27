@@ -23,8 +23,8 @@ export default function CandidateLoginPage() {
   const navigate = useNavigate();
   const setSession = useExamSessionStore((state) => state.setSession);
 
-  const [regNumber, setRegNumber] = useState('NEET-2026-000001');
-  const [password, setPassword] = useState('Candidate@123');
+  const [regNumber, setRegNumber] = useState('BSEA-2026-DEMO-001');
+  const [password, setPassword] = useState('BSeaDemo@2026');
   const [selectedExamId, setSelectedExamId] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -80,10 +80,13 @@ export default function CandidateLoginPage() {
 
   const registryStatus = getRegistryStatus();
 
-  // Automatically select the first exam when active exams become available
+  // Automatically select the official certification or first active exam
   useEffect(() => {
     if (registryStatus === 'available' && safeExams.length > 0 && !selectedExamId) {
-      setSelectedExamId(safeExams[0].id);
+      const preferred = safeExams.find((e: any) =>
+        e.title?.toLowerCase().includes('b-sea') || e.title?.toLowerCase().includes('security')
+      ) || safeExams[0];
+      setSelectedExamId(preferred.id);
     }
   }, [registryStatus, safeExams, selectedExamId]);
 
@@ -384,6 +387,30 @@ export default function CandidateLoginPage() {
                       : 'Start Examination'}
                     <ArrowRight className="w-4 h-4" />
                   </button>
+                </div>
+                {/* Evaluator & Demo Credentials Helper */}
+                <div className="mt-4 p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+                  <div className="flex items-center justify-between font-semibold text-slate-700 mb-1">
+                    <span>Evaluator & Demo Credentials</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRegNumber('BSEA-2026-DEMO-001');
+                        setPassword('BSeaDemo@2026');
+                        const preferred = safeExams.find((e: any) =>
+                          e.title?.toLowerCase().includes('b-sea') || e.title?.toLowerCase().includes('security')
+                        ) || safeExams[0];
+                        if (preferred) setSelectedExamId(preferred.id);
+                      }}
+                      className="text-[11px] text-amber-700 hover:text-amber-800 font-medium underline cursor-pointer"
+                    >
+                      Fill Demo Credentials
+                    </button>
+                  </div>
+                  <div className="text-[11px] text-slate-600 font-mono space-y-0.5">
+                    <div>Registration: <span className="font-bold text-slate-800">BSEA-2026-DEMO-001</span></div>
+                    <div>Password: <span className="font-bold text-slate-800">BSeaDemo@2026</span></div>
+                  </div>
                 </div>
               </form>
 
