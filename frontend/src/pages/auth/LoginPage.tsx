@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Shield, Lock, User, Key, AlertCircle, ChevronDown, ChevronUp, Sparkles, CheckCircle2 } from 'lucide-react';
+import { Lock, User, Key, AlertCircle, ChevronDown, ChevronUp, Sparkles, Eye, EyeOff } from 'lucide-react';
 import { authApi } from '../../services/api';
 import { useAuthStore } from '../../stores/authStore';
 import PortalHeader from '../../components/ui/PortalHeader';
@@ -24,6 +24,7 @@ export default function LoginPage() {
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -85,7 +86,7 @@ export default function LoginPage() {
 
   const fillDemoAccount = (u: string) => {
     setUsername(u);
-    setPassword('Admin@123456');
+    setPassword('BSeaDemo@2026');
     setError('');
   };
 
@@ -96,15 +97,16 @@ export default function LoginPage() {
       <main className="flex-1 flex items-center justify-center p-4 sm:p-6 lg:p-8">
         <div className="w-full max-w-md">
           {/* Main Auth Card */}
-          <div className="gov-card-elevated border-[var(--gov-border)]">
+          <div className="gov-card-elevated border-[var(--gov-border)] shadow-sm">
+            {/* Header Lock Icon & Titles */}
             <div className="text-center mb-6">
-              <div className="w-12 h-12 rounded-xl bg-[var(--gov-navy)] text-amber-400 flex items-center justify-center mx-auto mb-3 shadow-sm">
-                <Lock className="w-6 h-6" />
+              <div className="w-11 h-11 rounded-lg bg-[var(--gov-navy)] text-amber-400 flex items-center justify-center mx-auto mb-3.5 shadow-sm">
+                <Lock className="w-5 h-5" />
               </div>
-              <h1 className="text-xl font-bold text-[var(--gov-navy-dark)]">
+              <h1 className="text-xl font-bold text-[var(--gov-navy-dark)] tracking-tight">
                 {mfaRequired ? 'Two-Factor Verification' : 'Staff Portal Authentication'}
               </h1>
-              <p className="text-xs text-slate-500 mt-1">
+              <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
                 {mfaRequired
                   ? 'Enter the 6-digit TOTP code from your registered authenticator'
                   : 'Enter your credentials to access the examination security console'}
@@ -119,55 +121,78 @@ export default function LoginPage() {
             )}
 
             {!mfaRequired ? (
-              <form onSubmit={handleLogin} className="space-y-4">
+              <form onSubmit={handleLogin} className="space-y-5">
+                {/* Username Field */}
                 <div>
-                  <label className="form-label">Username</label>
-                  <div className="relative">
+                  <label htmlFor="staff-username" className="block text-xs font-semibold text-[var(--gov-navy-dark)] mb-2 text-left">
+                    Username
+                  </label>
+                  <div className="relative flex items-center">
+                    <div className="absolute left-0 inset-y-0 w-12 flex items-center justify-center pointer-events-none text-slate-400">
+                      <User className="w-5 h-5 text-slate-400" />
+                    </div>
                     <input
+                      id="staff-username"
                       type="text"
-                      className="form-input pl-9 text-xs"
+                      className="w-full h-14 pl-12 pr-4 bg-white border border-slate-300 rounded-lg text-sm text-[var(--gov-navy-dark)] placeholder:text-slate-400 focus:outline-none focus:border-amber-600 focus:ring-2 focus:ring-amber-500/20 transition-all duration-150"
                       placeholder="Enter assigned username"
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
                       required
                       autoComplete="username"
                     />
-                    <User className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                   </div>
                 </div>
 
+                {/* Password Field */}
                 <div>
-                  <label className="form-label">Password</label>
-                  <div className="relative">
+                  <label htmlFor="staff-password" className="block text-xs font-semibold text-[var(--gov-navy-dark)] mb-2 text-left">
+                    Password
+                  </label>
+                  <div className="relative flex items-center">
+                    <div className="absolute left-0 inset-y-0 w-12 flex items-center justify-center pointer-events-none text-slate-400">
+                      <Key className="w-5 h-5 text-slate-400" />
+                    </div>
                     <input
-                      type="password"
-                      className="form-input pl-9 text-xs"
+                      id="staff-password"
+                      type={showPassword ? 'text' : 'password'}
+                      className="w-full h-14 pl-12 pr-12 bg-white border border-slate-300 rounded-lg text-sm text-[var(--gov-navy-dark)] placeholder:text-slate-400 focus:outline-none focus:border-amber-600 focus:ring-2 focus:ring-amber-500/20 transition-all duration-150"
                       placeholder="Enter secure password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       required
                       autoComplete="current-password"
                     />
-                    <Key className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-0 inset-y-0 w-12 flex items-center justify-center text-slate-400 hover:text-slate-600 focus:outline-none focus:text-slate-600 transition-colors cursor-pointer"
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    >
+                      {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                    </button>
                   </div>
                 </div>
 
+                {/* Sign In Button */}
                 <button
                   type="submit"
-                  className="btn btn-primary w-full justify-center text-xs py-2.5 mt-2"
+                  className="btn btn-primary w-full h-12 justify-center text-sm font-semibold tracking-wide rounded-lg shadow-sm transition-all duration-150 mt-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   disabled={loading || !username || !password}
                 >
                   {loading ? 'Authenticating...' : 'Sign In'}
                 </button>
               </form>
             ) : (
-              <form onSubmit={handleMfaSubmit} className="space-y-4">
+              <form onSubmit={handleMfaSubmit} className="space-y-5">
                 <div>
-                  <label className="form-label">Authentication Code (TOTP)</label>
+                  <label className="block text-xs font-semibold text-[var(--gov-navy-dark)] mb-2 text-left">
+                    Authentication Code (TOTP)
+                  </label>
                   <input
                     type="text"
                     maxLength={6}
-                    className="form-input text-center font-mono tracking-widest text-base font-bold"
+                    className="w-full h-14 text-center font-mono tracking-widest text-base font-bold bg-white border border-slate-300 rounded-lg focus:outline-none focus:border-amber-600 focus:ring-2 focus:ring-amber-500/20 transition-all duration-150"
                     placeholder="000000"
                     value={totpCode}
                     onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, ''))}
@@ -179,14 +204,14 @@ export default function LoginPage() {
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    className="btn btn-outline flex-1 text-xs"
+                    className="btn btn-outline flex-1 h-12 text-xs rounded-lg"
                     onClick={() => { setMfaRequired(false); setTotpCode(''); }}
                   >
                     Back
                   </button>
                   <button
                     type="submit"
-                    className="btn btn-primary flex-1 text-xs"
+                    className="btn btn-primary flex-1 h-12 text-xs rounded-lg"
                     disabled={loading || totpCode.length !== 6}
                   >
                     {loading ? 'Verifying...' : 'Verify Code'}
@@ -195,11 +220,12 @@ export default function LoginPage() {
               </form>
             )}
 
-            <div className="mt-6 pt-4 border-t border-[var(--gov-border)] flex items-center justify-between text-xs text-slate-500">
-              <Link to="/candidate/login" className="text-amber-700 hover:underline font-medium">
-                Candidate CBT Portal →
+            {/* Footer Navigation Links */}
+            <div className="mt-6 pt-5 border-t border-[var(--gov-border)] flex items-center justify-between text-xs text-slate-600">
+              <Link to="/candidate/login" className="text-amber-700 hover:text-amber-800 hover:underline font-medium">
+                Candidate CBT Portal &rarr;
               </Link>
-              <Link to="/" className="hover:underline">
+              <Link to="/" className="text-slate-500 hover:text-slate-700 hover:underline">
                 Return Home
               </Link>
             </div>

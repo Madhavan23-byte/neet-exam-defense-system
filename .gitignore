@@ -96,3 +96,7 @@ tfplan
 
 # Local non-code artifacts
 Cloud mini Images/
+
+# Tunnel binaries
+cloudflared.exe
+*.exe
