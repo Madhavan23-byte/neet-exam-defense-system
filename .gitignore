@@ -100,3 +100,6 @@ Cloud mini Images/
 # Tunnel binaries
 cloudflared.exe
 *.exe
+
+# Redis database snapshot
+dump.rdb

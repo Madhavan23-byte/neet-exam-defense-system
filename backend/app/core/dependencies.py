@@ -18,6 +18,29 @@ from app.core.security import decode_token
 from app.modules.auth.service import ROLE_PERMISSIONS, has_permission
 
 bearer_scheme = HTTPBearer()
+optional_bearer_scheme = HTTPBearer(auto_error=False)
+
+
+async def get_optional_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_bearer_scheme),
+    db: AsyncSession = Depends(get_db),
+) -> Optional[User]:
+    """Extract and validate JWT token if present. Returns None if unauthenticated."""
+    if credentials is None or not credentials.credentials:
+        return None
+    try:
+        payload = decode_token(credentials.credentials)
+        user_id: str = payload.get("sub")
+        token_type: str = payload.get("type", "")
+        if user_id is None or token_type != "access":
+            return None
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if user is None or not user.is_active or user.is_locked:
+            return None
+        return user
+    except Exception:
+        return None
 
 
 async def get_current_user(

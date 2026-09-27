@@ -1,6 +1,9 @@
 import axios from 'axios';
 
-const apiBaseUrl = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '');
+// B-SEA Backend API endpoint configuration (Vercel Production & Local Parity)
+const DEFAULT_BACKEND_URL = 'https://aid-handmade-thee-opinions.trycloudflare.com';
+const configuredUrl = import.meta.env.VITE_API_URL;
+const apiBaseUrl = (configuredUrl !== undefined && configuredUrl !== '' ? configuredUrl : DEFAULT_BACKEND_URL).trim().replace(/\/+$/, '');
 const api = axios.create({
   baseURL: apiBaseUrl ? `${apiBaseUrl}/api/v1` : '/api/v1',
   headers: { 'Content-Type': 'application/json' },
