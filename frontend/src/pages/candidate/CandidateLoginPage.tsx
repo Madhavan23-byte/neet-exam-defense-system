@@ -114,13 +114,9 @@ export default function CandidateLoginPage() {
 
       // Persist candidate session store
       setSession({
-        sessionToken: data.session_token,
+        ...data,
+        exam_id: selectedExamId,
         examId: selectedExamId,
-        candidateName: data.candidate_name,
-        watermarkId: data.watermark_id,
-        totalQuestions: data.total_questions || 0,
-        durationMinutes: data.duration_minutes || 180,
-        expiresAt: data.expires_at,
       });
 
       navigate('/candidate/exam');
@@ -128,6 +124,12 @@ export default function CandidateLoginPage() {
       if (err?.isBackendOffline || !err?.response || err?.response?.status === 405) {
         setError('Examination services are currently unavailable. Please try again shortly.');
       } else if (err?.response?.status === 409) {
+        // If an active session is already stored in this browser terminal, resume directly
+        const storedToken = useExamSessionStore.getState().sessionToken;
+        if (storedToken) {
+          navigate('/candidate/exam');
+          return;
+        }
         setError('Active session conflict: Another terminal is already active for this registration ID.');
       } else {
         setError(
