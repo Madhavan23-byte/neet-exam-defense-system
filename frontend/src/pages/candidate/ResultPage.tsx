@@ -11,7 +11,17 @@ import PortalFooter from '../../components/ui/PortalFooter';
 
 export default function ResultPage() {
   const navigate = useNavigate();
-  const { sessionToken, clearSession } = useExamSessionStore();
+  const { sessionToken: storeToken, clearSession } = useExamSessionStore();
+
+  const getFallbackToken = () => {
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem('bsea_candidate_session') : null;
+      return raw ? JSON.parse(raw)?.state?.sessionToken : null;
+    } catch {
+      return null;
+    }
+  };
+  const sessionToken = storeToken || getFallbackToken();
 
   const [resultData, setResultData] = useState<any>(null);
   const [loading, setLoading] = useState(true);

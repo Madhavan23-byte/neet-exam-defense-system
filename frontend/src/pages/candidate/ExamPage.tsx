@@ -12,13 +12,27 @@ import ActionModal from '../../components/ui/ActionModal';
 export default function ExamPage() {
   const navigate = useNavigate();
   const {
-    sessionToken,
+    sessionToken: storeToken,
     totalQuestions: initialTotal,
-    candidateName,
-    watermarkId,
-    expiresAt,
+    candidateName: storeCandidateName,
+    watermarkId: storeWatermarkId,
+    expiresAt: storeExpiresAt,
     clearSession,
   } = useExamSessionStore();
+
+  const getFallbackSession = () => {
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem('bsea_candidate_session') : null;
+      return raw ? JSON.parse(raw)?.state : {};
+    } catch {
+      return {};
+    }
+  };
+  const fallback = getFallbackSession();
+  const sessionToken = storeToken || fallback?.sessionToken || null;
+  const candidateName = storeCandidateName || fallback?.candidateName || 'Candidate';
+  const watermarkId = storeWatermarkId || fallback?.watermarkId || '';
+  const expiresAt = storeExpiresAt || fallback?.expiresAt || null;
 
   const [currentIndex, setCurrentIndex] = useState(0);
   const [totalQuestions, setTotalQuestions] = useState(initialTotal || 1);
