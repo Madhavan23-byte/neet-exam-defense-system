@@ -5,7 +5,7 @@ import {
   BookOpen, AlertCircle, AlertTriangle, CheckCircle2,
   ArrowRight, RefreshCw, WifiOff, ServerCrash, ShieldAlert
 } from 'lucide-react';
-import { candidateApi, examsApi } from '../../services/api';
+import { candidateApi } from '../../services/api';
 import { useExamSessionStore } from '../../stores/examStore';
 import PortalHeader from '../../components/ui/PortalHeader';
 import PortalFooter from '../../components/ui/PortalFooter';
@@ -40,7 +40,7 @@ export default function CandidateLoginPage() {
   } = useQuery({
     queryKey: ['candidate-exams'],
     queryFn: async () => {
-      const res = await examsApi.list();
+      const res = await candidateApi.getExams();
       // Check for non-JSON or HTML string response
       if (typeof res.data === 'string') {
         throw new Error('NON_JSON_RESPONSE: Server returned non-JSON content');

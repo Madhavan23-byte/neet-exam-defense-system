@@ -73,6 +73,32 @@ import asyncio
 _identity_login_attempts = defaultdict(list)
 _identity_lock = asyncio.Lock()
 
+@router.get("/exams")
+async def list_candidate_exams(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Public candidate registry discovery endpoint.
+    Returns only RELEASED and ONGOING exams without leaking confidential blueprint or administrative data.
+    """
+    query = select(Exam).where(Exam.status.in_([ExamStatus.RELEASED, ExamStatus.ONGOING]))
+    result = await db.execute(query.order_by(Exam.created_at.desc()))
+    exams = result.scalars().all()
+    return [
+        {
+            "id": e.id,
+            "title": e.title,
+            "status": e.status.value,
+            "security_mode": e.security_mode.value,
+            "scheduled_start_utc": e.scheduled_start_utc.isoformat() if e.scheduled_start_utc else None,
+            "duration_minutes": e.duration_minutes,
+            "required_approvals": e.required_approvals,
+            "release_frozen": e.release_frozen,
+        }
+        for e in exams
+    ]
+
+
 @router.post("/auth/login")
 @limiter.limit(settings.rate_limit_ip_login)
 async def candidate_login(

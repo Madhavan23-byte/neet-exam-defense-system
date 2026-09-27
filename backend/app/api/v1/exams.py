@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_user, get_optional_current_user, require_permission
+from app.core.dependencies import get_current_user, require_permission
 from app.core.models import (
     Exam, ExamBlueprint, ExamForm, ExamStatus, FormStatus, Question, QuestionStatus, User
 )
@@ -91,15 +91,13 @@ async def create_exam(
 
 @router.get("/")
 async def list_exams(
-    current_user: Optional[User] = Depends(get_optional_current_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all exams for the organization, or active/released exams if unauthenticated."""
-    if current_user:
-        query = select(Exam).where(Exam.org_id == current_user.org_id)
-    else:
-        query = select(Exam).where(Exam.status.in_([ExamStatus.RELEASED, ExamStatus.ONGOING]))
-    result = await db.execute(query.order_by(Exam.created_at.desc()))
+    """List all exams for the organization."""
+    result = await db.execute(
+        select(Exam).where(Exam.org_id == current_user.org_id).order_by(Exam.created_at.desc())
+    )
     exams = result.scalars().all()
     return [
         {

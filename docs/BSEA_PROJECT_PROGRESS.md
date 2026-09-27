@@ -1,4 +1,4 @@
-# B-SEA — Project Scratch Pad & Continuous Progress Tracker
+# B-SEA Â— Project Scratch Pad & Continuous Progress Tracker
 
 Last Updated: 2026-09-27T12:32:00+05:30
 Current Branch: main
@@ -28,6 +28,11 @@ Latest Commit: e57bfe
 - **Root Cause:** In Vercel, requests to POST /api/v1/auth/login were captured by the catch-all SPA rewrite {"source": "/(.*)", "destination": "/index.html"}. Vercel's static file engine rejected HTTP POST requests against static HTML with HTTP 405 Method Not Allowed.
 - **Solution:** Added edge reverse proxy rewrite {"source": "/api/v1/:path*", "destination": "https://aid-handmade-thee-opinions.trycloudflare.com/api/v1/:path*"} to both ercel.json and rontend/vercel.json, and configured DEFAULT_BACKEND_URL in rontend/src/services/api.ts.
 - **Verification:** Verified live on Vercel (https://neet-exam-defense-system.vercel.app/login). POST /api/v1/auth/login no longer returns 405; requests are transparently routed to the backend.
+
+### Issue 3: Architectural Separation of Candidate Discovery and Staff Exam Administration
+- **Root Cause:** Making `GET /api/v1/exams/` unauthenticated violated security test `test_api_requires_auth_for_protected_routes` which tests that administrative exam routes require authentication and return 401.
+- **Solution:** Restored strict `Depends(get_current_user)` authentication on `GET /api/v1/exams/`. Created dedicated public candidate endpoint `GET /api/v1/candidate/exams` returning only `RELEASED` and `ONGOING` exams. Added `getExams()` to `candidateApi` and updated `CandidateLoginPage.tsx`. Also cleaned package metadata from `temp-init` to `bsea-frontend@1.0.0`.
+- **Verification:** Security test suite passed 100% (16 passed, 5 skipped, 0 failed in `test_attacks.py`; 31/31 in 5D; 35/35 in 5E). Public candidate discovery and staff administrative isolation both verified live.
 
 ### Issue 2: Candidate Portal \"Examination Server Error (HTTP 5xx)\"
 - **Root Cause:** Candidate registry call GET /api/v1/exams/ was rewritten by Vercel to index.html. The frontend pi.ts interceptor detected HTML text instead of JSON and generated a synthetic HTTP 503 error, causing CandidateLoginPage to render a 5xx gateway error. Additionally, list_exams required staff JWT authentication.

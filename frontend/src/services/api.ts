@@ -100,6 +100,7 @@ export const releaseApi = {
 
 // ── Candidate CBT ─────────────────────────────────────────────────────────────
 export const candidateApi = {
+  getExams: () => api.get('/candidate/exams'),
   login: (registration_number: string, password: string, exam_id: string) =>
     api.post('/candidate/auth/login', { registration_number, password, exam_id }),
   getQuestion: (index: number, token: string) =>
