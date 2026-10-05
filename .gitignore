@@ -103,3 +103,4 @@ cloudflared.exe
 
 # Redis database snapshot
 dump.rdb
+appendonlydir/

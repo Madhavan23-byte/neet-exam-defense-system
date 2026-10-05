@@ -1,25 +1,65 @@
 import axios from 'axios';
 
 // B-SEA Backend API endpoint configuration (Vercel Production & Local Parity)
-const DEFAULT_BACKEND_URL = 'https://loops-acquisitions-theory-customized.trycloudflare.com';
-const configuredUrl = import.meta.env.VITE_API_URL;
-const apiBaseUrl = (configuredUrl !== undefined && configuredUrl !== '' ? configuredUrl : DEFAULT_BACKEND_URL).trim().replace(/\/+$/, '');
+// Verified active Cloudflare edge tunnel for the live demonstrator
+export const DEFAULT_BACKEND_URL = 'https://rehabilitation-wins-convergence-addresses.trycloudflare.com';
+
+/**
+ * Returns the authoritative backend base URL.
+ * Precedence:
+ * 1. Runtime override stored in localStorage (`bsea_backend_url`) - allows instant demo reconnection
+ * 2. Vite environment variable (`VITE_API_URL`)
+ * 3. Default verified active Cloudflare tunnel URL
+ */
+export const getActiveBackendUrl = (): string => {
+  if (typeof window !== 'undefined') {
+    const custom = localStorage.getItem('bsea_backend_url');
+    if (custom && custom.trim() !== '') {
+      return custom.trim().replace(/\/+$/, '');
+    }
+  }
+  const configuredUrl = import.meta.env.VITE_API_URL;
+  if (configuredUrl !== undefined && configuredUrl.trim() !== '') {
+    return configuredUrl.trim().replace(/\/+$/, '');
+  }
+  return DEFAULT_BACKEND_URL.trim().replace(/\/+$/, '');
+};
+
+export const setCustomBackendUrl = (url: string): void => {
+  if (typeof window !== 'undefined') {
+    const clean = url.trim().replace(/\/+$/, '');
+    localStorage.setItem('bsea_backend_url', clean);
+  }
+};
+
+export const resetBackendUrl = (): void => {
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('bsea_backend_url');
+  }
+};
+
+const initialBaseUrl = getActiveBackendUrl();
+
 const api = axios.create({
-  baseURL: apiBaseUrl ? `${apiBaseUrl}/api/v1` : '/api/v1',
+  baseURL: initialBaseUrl ? `${initialBaseUrl}/api/v1` : '/api/v1',
   headers: { 'Content-Type': 'application/json' },
   timeout: 30000,
 });
 
-// Attach auth token to every request
+// Attach auth token and dynamically ensure authoritative base URL
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('bsea_token');
+  const activeBase = getActiveBackendUrl();
+  if (activeBase && !config.url?.startsWith('http://') && !config.url?.startsWith('https://')) {
+    config.baseURL = `${activeBase}/api/v1`;
+  }
+  const token = typeof window !== 'undefined' ? localStorage.getItem('bsea_token') : null;
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
 });
 
-// Response interceptor: Global 401 handling and SPA catch-all HTML detection
+// Response interceptor: Global error classification and SPA catch-all HTML detection
 api.interceptors.response.use(
   (res) => {
     // If an API request receives an HTML document instead of JSON (typical when backend is offline on SPA hosts)
@@ -28,28 +68,71 @@ api.interceptors.response.use(
       (res.data.trim().toLowerCase().startsWith('<!doctype') ||
        res.data.trim().toLowerCase().startsWith('<html'))
     ) {
-      const offlineError: any = new Error('Examination backend services are currently unreachable.');
+      const offlineError: any = new Error('Examination backend services are currently unreachable (received SPA HTML).');
       offlineError.isBackendOffline = true;
+      offlineError.userMessage = 'Examination backend service is unreachable. The demonstration tunnel may be offline.';
       offlineError.response = {
         status: 503,
         statusText: 'Service Unavailable',
-        data: { detail: 'Examination services are currently unavailable. Please try again shortly.' },
+        data: { detail: 'Examination services are currently unavailable. Please verify that the backend daemon and tunnel are active.' },
       };
       return Promise.reject(offlineError);
     }
     return res;
   },
   (error) => {
-    if (error.response?.status === 401) {
-      localStorage.removeItem('bsea_token');
-      localStorage.removeItem('bsea_user');
-      window.location.href = '/login';
+    // Network / connectivity errors (DNS resolution failure, tunnel terminated, CORS, timeout)
+    if (!error.response) {
+      error.isNetworkError = true;
+      error.isBackendOffline = true;
+      if (error.code === 'ECONNABORTED' || error.message?.toLowerCase().includes('timeout')) {
+        error.userMessage = 'Request timed out. The demonstration backend is under heavy load or offline.';
+      } else {
+        error.userMessage = 'Demonstration backend service unreachable. Please ensure the B-SEA backend tunnel is active.';
+      }
+    } else {
+      const status = error.response.status;
+      if (status === 401) {
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('bsea_token');
+          localStorage.removeItem('bsea_user');
+          if (!window.location.pathname.includes('/login')) {
+            window.location.href = '/login';
+          }
+        }
+        error.userMessage = error.response.data?.detail || 'Authentication required. Please sign in again.';
+      } else if (status === 403) {
+        error.userMessage = error.response.data?.detail || 'Access denied. You do not possess the required RBAC role permissions.';
+      } else if (status === 404) {
+        error.userMessage = error.response.data?.detail || 'The requested API route was not found on the server.';
+      } else if (status === 405) {
+        error.userMessage = 'API method not allowed (HTTP 405).';
+      } else if (status === 409) {
+        error.userMessage = error.response.data?.detail || 'Active session conflict: Another terminal is already active for this candidate.';
+      } else if (status >= 500) {
+        error.userMessage = error.response.data?.detail || `Demonstration gateway error (HTTP ${status}). The backend service is unreachable.`;
+      } else {
+        error.userMessage = error.response.data?.detail || error.message || 'An error occurred during API communication.';
+      }
     }
     return Promise.reject(error);
   }
 );
 
 export default api;
+
+export const healthApi = {
+  checkReady: async (baseUrl?: string) => {
+    const base = baseUrl ? baseUrl.replace(/\/+$/, '') : getActiveBackendUrl();
+    const res = await axios.get(`${base}/health/ready`, { timeout: 8000 });
+    return res.data;
+  },
+  checkLive: async (baseUrl?: string) => {
+    const base = baseUrl ? baseUrl.replace(/\/+$/, '') : getActiveBackendUrl();
+    const res = await axios.get(`${base}/health`, { timeout: 8000 });
+    return res.data;
+  },
+};
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 export const authApi = {

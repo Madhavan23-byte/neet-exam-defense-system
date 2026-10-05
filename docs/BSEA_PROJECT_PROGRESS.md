@@ -164,3 +164,34 @@ The verified baseline of test suites and operational checks:
      - 5D Incident Management: 31/31 passed.
      - 5E Containment: 35/35 passed.
      - Security Attack Suite: 16 passed, 5 skipped, 0 failed.
+
+---
+
+## 7. Demo Reliability Takeover & Network Error Resolution
+
+- **Date:** 2026-10-06T00:50:00+05:30
+- **Observed Issue:** UI displayed generic "Network Error" on Vercel deployment when attempting staff authentication or candidate discovery.
+- **Root Cause Analysis (Diagnosed, not guessed):**
+  1. *Host Process Inactivity:* Following server restart, local background tasks (Redis on 6379, FastAPI uvicorn on 8000, and Cloudflare tunnel) had stopped.
+  2. *Ephemeral Quick Tunnel Expiration:* Cloudflare free quick tunnels (`*.trycloudflare.com`) are ephemeral. When the tunnel process stopped, `loops-acquisitions-theory-customized.trycloudflare.com` ceased to exist (`net::ERR_NAME_NOT_RESOLVED` / `DNS_HOSTNAME_NOT_FOUND`).
+  3. *Static Configuration Lock:* `DEFAULT_BACKEND_URL` in `frontend/src/services/api.ts` and the reverse proxy destination in `vercel.json` and `frontend/vercel.json` were statically hardcoded to the dead tunnel URL.
+  4. *Error Masking in Frontend:* Axios surfaced raw `net::ERR_NAME_NOT_RESOLVED` as `"Network Error"` without clear human-readable guidance.
+- **Remediation & Architecture Hardening:**
+  1. *Service Restoration:* Restarted Redis 8.10 (`--appendonly yes`) on 6379 and FastAPI backend on 8000. Verified health readiness returns HTTP 200 with DB, Redis, and MockKMS operational.
+  2. *New Edge Tunnel Establishment:* Launched active Cloudflare tunnel: `https://rehabilitation-wins-convergence-addresses.trycloudflare.com`.
+  3. *Vercel Configuration Synchronization:* Updated `/api/v1/:path*` reverse proxy rewrite destinations in both `vercel.json` and `frontend/vercel.json` to the active tunnel.
+  4. *Dynamic Base URL Resolution (`frontend/src/services/api.ts`):*
+     - Enabled precedence-based URL resolution: `localStorage('bsea_backend_url')` -> `VITE_API_URL` -> Active tunnel default.
+     - Added dynamic request interceptor ensuring runtime URL overrides take effect immediately without requiring code edits or redeployments.
+     - Hardened response interceptor with rich, human-readable diagnostics for offline, gateway (502/503/504), auth (401/403), route (404/405), and conflict (409) conditions.
+     - Added `healthApi` and runtime URL setter/resetter utilities.
+  5. *Turnkey Demo Startup Script:* Created `start_demo.ps1` to automate starting PostgreSQL, Redis, FastAPI, and Cloudflare tunnel in one step.
+  6. *Teacher Presentation Runbook:* Created `docs/BSEA_DEMO_RUNBOOK.md` with complete step-by-step presentation scripts, smoke test commands, and troubleshooting guides.
+- **Verification Baseline:**
+  - Local Health: `http://127.0.0.1:8000/health/ready` -> HTTP 200 (`database: ok`, `redis: ok`, `crypto: ok`)
+  - Cloudflare Edge Tunnel Health: `https://rehabilitation-wins-convergence-addresses.trycloudflare.com/health/ready` -> HTTP 200
+  - Candidate Discovery: `GET /api/v1/candidate/exams` -> HTTP 200 (Active exams returned)
+  - Staff Authentication: `POST /api/v1/auth/login` -> HTTP 200 (JWT access token issued)
+  - CORS Preflight: `OPTIONS /api/v1/auth/login` from `https://neet-exam-defense-system.vercel.app` -> HTTP 200 with `Access-Control-Allow-Credentials: true`
+  - Frontend Build: `tsc -b && vite build` passed cleanly in 1.86s with zero errors.
+  - Automated Tests: 306 passed, 0 failed, 5 skipped (total 311).

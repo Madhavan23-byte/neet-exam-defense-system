@@ -61,7 +61,7 @@ export default function LoginPage() {
         navigate('/admin');
       }
     } catch (err: any) {
-      setError(err?.response?.data?.detail || err.message || 'Invalid username or password');
+      setError(err?.response?.data?.detail || err?.userMessage || err.message || 'Invalid username or password');
     } finally {
       setLoading(false);
     }
@@ -78,7 +78,7 @@ export default function LoginPage() {
       setAuth(data.user, data.access_token);
       navigate('/admin');
     } catch (err: any) {
-      setError(err?.response?.data?.detail || err.message || 'Invalid authentication code');
+      setError(err?.response?.data?.detail || err?.userMessage || err.message || 'Invalid authentication code');
     } finally {
       setLoading(false);
     }
