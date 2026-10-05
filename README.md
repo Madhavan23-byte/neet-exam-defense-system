@@ -15,6 +15,16 @@
 
 ---
 
+## 🎥 Project Demo
+
+**Complete B-SEA Demonstration**
+
+[▶️ Watch B-SEA Demo Video](./demo%20video/Demo%20vedio.mp4)
+
+> This video demonstrates the end-to-end B-SEA prototype, including the candidate examination workflow, staff portal, security monitoring, incident handling, containment workflow, and audit capabilities.
+
+---
+
 ## 🎯 Executive Summary & Core Principle
 
 High-stakes public and competitive examinations (such as medical, engineering, and civic recruitment) require non-negotiable confidentiality, integrity, and operational resilience across the entire examination lifecycle—from question authoring to controlled threshold release and computer-based test (CBT) delivery.
